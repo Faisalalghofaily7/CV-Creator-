@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState } from "react";
 import { FileText, Download, ChevronLeft, ChevronRight, Plus, Trash2, User, Briefcase, GraduationCap, Award, Wrench, CheckCircle2, Loader2 } from "lucide-react";
 import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
+import { embedArabicFonts } from "../lib/pdfText";
+import { buildCvPdf } from "../lib/cvPdfLayout";
 
 // ── Design tokens ──────────────────────────────────────────────
 // "Official HR file" identity: ink navy + brass on warm paper.
@@ -30,7 +31,6 @@ export default function AtsCvBuilder() {
   const [step, setStep] = useState(0);
   const [preview, setPreview] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const cvRef = useRef(null);
 
   const [form, setForm] = useState({
     name: "",
@@ -81,38 +81,12 @@ export default function AtsCvBuilder() {
   const splitList = (t) => t.split(/[،,\n]/).map((l) => l.trim()).filter(Boolean);
 
   async function downloadPDF() {
-    if (!cvRef.current) return;
     setDownloading(true);
     try {
-      // Render the CV page to a high-res canvas, then place it into an A4 PDF.
-      // Image-based rendering guarantees Arabic RTL text appears exactly as previewed.
-      const canvas = await html2canvas(cvRef.current, {
-        scale: 2,
-        backgroundColor: "#fffdf8",
-        useCORS: true,
-        logging: false,
-      });
-      const imgData = canvas.toDataURL("image/jpeg", 0.95);
-
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pageW = 210;
-      const pageH = 297;
-      const imgW = pageW;
-      const imgH = (canvas.height * imgW) / canvas.width;
-
-      let heightLeft = imgH;
-      let position = 0;
-
-      pdf.addImage(imgData, "JPEG", 0, position, imgW, imgH);
-      heightLeft -= pageH;
-
-      // Add extra pages if the CV is taller than one A4 page
-      while (heightLeft > 0) {
-        position -= pageH;
-        pdf.addPage();
-        pdf.addImage(imgData, "JPEG", 0, position, imgW, imgH);
-        heightLeft -= pageH;
-      }
+      await embedArabicFonts(pdf);
+      pdf.setFont("Amiri", "normal");
+      buildCvPdf(pdf, { form, experiences, education, techSkills, softSkills, splitLines, splitList });
 
       const safeName = (form.name || "CV").replace(/\s+/g, "_");
       pdf.save(`${safeName}_CV.pdf`);
@@ -138,7 +112,7 @@ export default function AtsCvBuilder() {
         </div>
 
         <div style={{ display: "flex", justifyContent: "center", padding: "24px 12px 60px" }}>
-          <div ref={cvRef} className="cv-page" style={cvPage}>
+          <div className="cv-page" style={cvPage}>
             {/* Header */}
             <div style={{ borderBottom: `2.5px solid ${C.ink}`, paddingBottom: 12, marginBottom: 16 }}>
               <div style={{ fontSize: 26, fontWeight: 800, color: C.ink, letterSpacing: 0.3 }}>{form.name || "الاسم الكامل"}</div>
