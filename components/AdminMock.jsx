@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { Lock, Copy, LogOut, Sparkles, Check } from "lucide-react";
 
-const C = { ink: "#000000", paper: "#ffffff", paperCard: "#ffffff", slate: "#333333", line: "#d0d0d0" };
+const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
 const DEMO_USER = "admin";
 const DEMO_PASS = "admin123";
@@ -78,7 +78,7 @@ export default function AdminMock() {
 
           <button type="submit" style={{ ...btnPrimary, width: "100%", marginTop: 18 }}>تسجيل الدخول</button>
 
-          <div style={{ marginTop: 16, fontSize: 11.5, color: C.slate, background: "#f5f5f5", border: `1px dashed ${C.line}`, borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
+          <div style={{ marginTop: 16, fontSize: 11.5, color: C.slate, background: C.soft, border: `1px dashed ${C.line}`, borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
             بيانات تجريبية: admin / admin123
           </div>
         </form>
@@ -90,7 +90,7 @@ export default function AdminMock() {
     <div dir="rtl" style={{ minHeight: "100vh", background: C.paper, fontFamily: "'Segoe UI', Tahoma, sans-serif", color: C.ink }}>
       <div style={{ background: C.ink, padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ color: "#fff", fontSize: 17, fontWeight: 700 }}>لوحة المشرف — توليد أكواد الطلبات</div>
-        <button onClick={handleLogout} style={btnGhostLight}><LogOut size={15} /> تسجيل الخروج</button>
+        <button onClick={handleLogout} style={btnGhostOnDark}><LogOut size={15} /> تسجيل الخروج</button>
       </div>
 
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 20px 60px" }}>
@@ -100,10 +100,10 @@ export default function AdminMock() {
           <button onClick={handleGenerate} style={btnPrimary}><Sparkles size={16} /> توليد كود جديد</button>
 
           {codes.length > 0 && (
-            <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10, background: "#f7f7f7", border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10, background: C.soft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px" }}>
               <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: 1, color: C.ink, fontFamily: "monospace" }}>{codes[0].code}</span>
               <button onClick={() => handleCopy(codes[0].code)} style={btnIcon} title="نسخ">
-                {copiedCode === codes[0].code ? <Check size={17} color="#000" /> : <Copy size={17} color="#000" />}
+                {copiedCode === codes[0].code ? <Check size={17} color="#1a3a5c" /> : <Copy size={17} color="#1a3a5c" />}
               </button>
             </div>
           )}
@@ -112,7 +112,7 @@ export default function AdminMock() {
         <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
-              <tr style={{ background: "#f5f5f5" }}>
+              <tr style={{ background: C.soft }}>
                 <th style={thStyle}>الكود</th>
                 <th style={thStyle}>الحالة</th>
                 <th style={thStyle}>رقم طلب سلة (اختياري)</th>
@@ -152,12 +152,12 @@ export default function AdminMock() {
   );
 }
 
-const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#000000", marginBottom: 6 };
-const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #cccccc", background: "#ffffff", fontSize: 13.5, color: "#000000", fontFamily: "inherit", boxSizing: "border-box" };
-const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#000000", color: "#ffffff", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
-const btnGhostLight = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#ffffff", border: "1px solid #555555", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
+const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#3a4a5a", marginBottom: 6 };
+const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #dde4ec", background: "#ffffff", fontSize: 13.5, color: "#3a4a5a", fontFamily: "inherit", boxSizing: "border-box" };
+const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#1a3a5c", color: "#ffffff", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
+const btnGhostOnDark = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#ffffff", border: "1px solid #2d5578", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
 const btnIcon = { background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "inline-flex", verticalAlign: "middle" };
-const noteBanner = { background: "#f5f5f5", border: `1px dashed ${C.line}`, borderRadius: 8, padding: "10px 14px", fontSize: 12.5, color: C.slate, marginBottom: 20, textAlign: "center" };
-const thStyle = { textAlign: "start", padding: "10px 14px", fontSize: 12, fontWeight: 700, color: C.ink, borderBottom: `1px solid ${C.line}` };
-const tdStyle = { padding: "10px 14px", fontSize: 12.5, color: C.ink, verticalAlign: "middle" };
-const statusBadge = { display: "inline-block", background: "#000000", color: "#ffffff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 10px" };
+const noteBanner = { background: "#e8eef4", border: "1px dashed #dde4ec", borderRadius: 8, padding: "10px 14px", fontSize: 12.5, color: "#3a4a5a", marginBottom: 20, textAlign: "center" };
+const thStyle = { textAlign: "start", padding: "10px 14px", fontSize: 12, fontWeight: 700, color: "#1a3a5c", borderBottom: "1px solid #dde4ec" };
+const tdStyle = { padding: "10px 14px", fontSize: 12.5, color: "#1a3a5c", verticalAlign: "middle" };
+const statusBadge = { display: "inline-block", background: "#1a3a5c", color: "#ffffff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 10px" };

@@ -17,6 +17,21 @@ const C = {
   ok: "#000000",
 };
 
+// Petrol-navy brand palette — used everywhere in this component EXCEPT the
+// CV preview screen and print output above, which stay on the original
+// black/white identity `C` so the on-screen preview keeps matching the
+// generated PDF exactly.
+const THEME = {
+  primary: "#1a3a5c",
+  primaryDark: "#12293f",
+  secondary: "#2d5578",
+  soft: "#e8eef4",
+  pageBg: "#f5f7fa",
+  card: "#ffffff",
+  text: "#3a4a5a",
+  border: "#dde4ec",
+};
+
 const STEPS = [
   { key: "personal", label: "البيانات الشخصية", icon: User },
   { key: "experience", label: "الخبرات", icon: Briefcase },
@@ -217,23 +232,23 @@ export default function AtsCvBuilder() {
 
   // ───────────────────────── FORM ─────────────────────────
   return (
-    <div dir="rtl" style={{ minHeight: "100vh", background: C.paper, fontFamily: "'Segoe UI', Tahoma, sans-serif", color: C.ink }}>
-      <div style={{ background: C.ink, padding: "22px 24px", borderBottom: `3px solid ${C.brass}` }}>
+    <div dir="rtl" style={{ minHeight: "100vh", background: THEME.pageBg, fontFamily: "'Segoe UI', Tahoma, sans-serif", color: THEME.text }}>
+      <div style={{ background: THEME.primary, padding: "22px 24px", borderBottom: `3px solid ${THEME.secondary}` }}>
         <div style={{ maxWidth: 820, margin: "0 auto", display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ background: C.brass, width: 42, height: 42, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <FileText size={22} color={C.ink} />
+          <div style={{ background: THEME.secondary, width: 42, height: 42, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <FileText size={22} color="#ffffff" />
           </div>
           <div>
-            <div style={{ color: C.paperCard, fontSize: 19, fontWeight: 700 }}>منشئ السيرة الذاتية — ATS</div>
-            <div style={{ color: C.brassSoft, fontSize: 12.5 }}>عبّئ بياناتك واحصل على سيرة بصيغة PDF متوافقة مع أنظمة التوظيف</div>
+            <div style={{ color: "#ffffff", fontSize: 19, fontWeight: 700 }}>منشئ السيرة الذاتية — ATS</div>
+            <div style={{ color: THEME.soft, fontSize: 12.5 }}>عبّئ بياناتك واحصل على سيرة بصيغة PDF متوافقة مع أنظمة التوظيف</div>
           </div>
         </div>
       </div>
 
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 20px 60px" }}>
         {/* Language of the CV output (form UI itself stays Arabic) */}
-        <div style={{ background: C.paperCard, borderRadius: 10, border: `1px solid ${C.line}`, padding: "12px 16px", marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>لغة السيرة الذاتية الناتجة</span>
+        <div style={{ background: THEME.card, borderRadius: 10, border: `1px solid ${THEME.border}`, padding: "12px 16px", marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: THEME.primary }}>لغة السيرة الذاتية الناتجة</span>
           <div style={{ display: "flex", gap: 6 }}>
             {[{ code: "ar", label: "العربية" }, { code: "en", label: "English" }].map((opt) => (
               <button
@@ -242,9 +257,9 @@ export default function AtsCvBuilder() {
                 style={{
                   padding: "7px 18px",
                   borderRadius: 7,
-                  border: `1px solid ${cvLang === opt.code ? C.ink : C.line}`,
-                  background: cvLang === opt.code ? C.ink : "transparent",
-                  color: cvLang === opt.code ? C.paperCard : C.slate,
+                  border: `1px solid ${cvLang === opt.code ? THEME.primary : THEME.border}`,
+                  background: cvLang === opt.code ? THEME.primary : "transparent",
+                  color: cvLang === opt.code ? "#ffffff" : THEME.text,
                   fontSize: 13,
                   fontWeight: 600,
                   cursor: "pointer",
@@ -264,17 +279,17 @@ export default function AtsCvBuilder() {
             const active = i === step;
             const done = i < step;
             return (
-              <button key={s.key} onClick={() => setStep(i)} style={{ flex: "1 1 130px", display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 8, background: active ? C.ink : done ? "#eae3d3" : C.paperCard, border: `1px solid ${active ? C.ink : C.line}`, cursor: "pointer", fontFamily: "inherit" }}>
-                <div style={{ width: 26, height: 26, borderRadius: 6, background: active ? C.brass : done ? C.ok : C.line, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  {done ? <CheckCircle2 size={15} color="#fff" /> : <Icon size={15} color={active ? C.ink : C.slate} />}
+              <button key={s.key} onClick={() => setStep(i)} style={{ flex: "1 1 130px", display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 8, background: active ? THEME.primary : done ? THEME.soft : THEME.card, border: `1px solid ${active ? THEME.primary : THEME.border}`, cursor: "pointer", fontFamily: "inherit" }}>
+                <div style={{ width: 26, height: 26, borderRadius: 6, background: active ? THEME.secondary : done ? THEME.primary : THEME.border, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  {done ? <CheckCircle2 size={15} color="#fff" /> : <Icon size={15} color={active ? "#ffffff" : THEME.text} />}
                 </div>
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: active ? C.paperCard : C.slate }}>{s.label}</span>
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: active ? "#ffffff" : THEME.text }}>{s.label}</span>
               </button>
             );
           })}
         </div>
 
-        <div style={{ background: C.paperCard, borderRadius: 12, border: `1px solid ${C.line}`, padding: 26, boxShadow: "0 1px 3px rgba(20,40,60,.06)" }}>
+        <div style={{ background: THEME.card, borderRadius: 12, border: `1px solid ${THEME.border}`, padding: 26, boxShadow: "0 1px 3px rgba(20,40,60,.06)" }}>
           {/* STEP 0 - Personal */}
           {step === 0 && (
             <>
@@ -295,9 +310,9 @@ export default function AtsCvBuilder() {
             <>
               <SectionTitle>الخبرات العملية والتدريب</SectionTitle>
               {experiences.map((x, i) => (
-                <div key={i} style={{ border: `1px solid ${C.line}`, borderRadius: 10, padding: 16, marginBottom: 14, background: C.paper }}>
+                <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginBottom: 14, background: THEME.card }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: C.brass }}>خبرة #{i + 1}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>خبرة #{i + 1}</span>
                     {experiences.length > 1 && (
                       <button onClick={() => rmExp(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
                     )}
@@ -319,9 +334,9 @@ export default function AtsCvBuilder() {
             <>
               <SectionTitle>المؤهل العلمي</SectionTitle>
               {education.map((x, i) => (
-                <div key={i} style={{ border: `1px solid ${C.line}`, borderRadius: 10, padding: 16, marginBottom: 14, background: C.paper }}>
+                <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginBottom: 14, background: THEME.card }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: C.brass }}>مؤهل #{i + 1}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>مؤهل #{i + 1}</span>
                     {education.length > 1 && (
                       <button onClick={() => rmEdu(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
                     )}
@@ -359,7 +374,7 @@ export default function AtsCvBuilder() {
           )}
 
           {/* Nav */}
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 24, paddingTop: 20, borderTop: `1px solid ${C.line}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 24, paddingTop: 20, borderTop: `1px solid ${THEME.border}` }}>
             <button onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0} style={{ ...btnGhost, opacity: step === 0 ? 0.4 : 1, cursor: step === 0 ? "not-allowed" : "pointer" }}>
               <ChevronRight size={17} /> السابق
             </button>
@@ -374,11 +389,11 @@ export default function AtsCvBuilder() {
             )}
           </div>
           {step === 0 && !canProceed() && (
-            <div style={{ marginTop: 12, fontSize: 12, color: C.slate, textAlign: "center" }}>* الاسم والجوال والوظيفة المستهدفة مطلوبة للمتابعة</div>
+            <div style={{ marginTop: 12, fontSize: 12, color: THEME.text, textAlign: "center" }}>* الاسم والجوال والوظيفة المستهدفة مطلوبة للمتابعة</div>
           )}
         </div>
 
-        <div style={{ textAlign: "center", marginTop: 16, fontSize: 11.5, color: C.slate }}>
+        <div style={{ textAlign: "center", marginTop: 16, fontSize: 11.5, color: THEME.text }}>
           بياناتك تُستخدَم فقط لتوليد ملف PDF عند الضغط على "تحميل PDF"، ولا تُحفظ على أي خادم.
         </div>
       </div>
@@ -388,7 +403,7 @@ export default function AtsCvBuilder() {
 
 // ── Reusable pieces ──
 function SectionTitle({ children }) {
-  return <div style={{ fontSize: 16, fontWeight: 700, color: "#000000", marginBottom: 18 }}>{children}</div>;
+  return <div style={{ fontSize: 16, fontWeight: 700, color: "#1a3a5c", marginBottom: 18 }}>{children}</div>;
 }
 
 function Section({ title, children }) {
@@ -420,10 +435,10 @@ function fieldArea(label, val, onChange, opts = {}) {
   );
 }
 
-// ── Styles ──
-const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#000000", marginBottom: 6 };
-const hintStyle = { fontSize: 11.5, color: "#333333", marginTop: 5, lineHeight: 1.5 };
-const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #cccccc", background: "#ffffff", fontSize: 13.5, color: "#000000", fontFamily: "inherit", boxSizing: "border-box" };
+// ── Styles (form-only — the CV preview/PDF below keeps its own black/white styling) ──
+const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#3a4a5a", marginBottom: 6 };
+const hintStyle = { fontSize: 11.5, color: "#3a4a5a", marginTop: 5, lineHeight: 1.5 };
+const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #dde4ec", background: "#ffffff", fontSize: 13.5, color: "#3a4a5a", fontFamily: "inherit", boxSizing: "border-box" };
 
 const cvPage = { width: "210mm", minHeight: "297mm", background: "#ffffff", padding: "18mm 16mm", boxShadow: "0 2px 16px rgba(20,40,60,.12)", boxSizing: "border-box" };
 const pBody = { margin: 0, fontSize: 13, lineHeight: 1.85, color: "#333333", textAlign: "justify" };
@@ -431,11 +446,12 @@ const ulBody = (dir) => ({ margin: "5px 0 0", [dir === "ltr" ? "paddingLeft" : "
 const liBody = (dir) => ({ fontSize: 12.5, lineHeight: 1.7, color: "#333333", position: "relative", [dir === "ltr" ? "paddingLeft" : "paddingRight"]: 12, marginBottom: 3 });
 const skillCat = { fontWeight: 700, color: "#000000", fontSize: 12.5 };
 
-const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#000000", color: "#ffffff", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
-const btnGhost = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#000000", border: "1px solid #cccccc", borderRadius: 8, padding: "11px 18px", fontSize: 14, fontWeight: 600, fontFamily: "inherit" };
+const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#1a3a5c", color: "#ffffff", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
+const btnGhost = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#1a3a5c", border: "1px solid #dde4ec", borderRadius: 8, padding: "11px 18px", fontSize: 14, fontWeight: 600, fontFamily: "inherit" };
+// btnGhostLight and btnBrass style the CV preview toolbar only — left as-is intentionally.
 const btnGhostLight = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#ffffff", border: "1px solid #555555", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
 const btnBrass = { display: "inline-flex", alignItems: "center", gap: 7, background: "#000000", color: "#ffffff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
-const btnAdd = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#000000", border: "1.5px dashed #555555", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%", justifyContent: "center" };
+const btnAdd = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#1a3a5c", border: "1.5px dashed #2d5578", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%", justifyContent: "center" };
 const btnIcon = { background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex" };
 
 const printCSS = `
