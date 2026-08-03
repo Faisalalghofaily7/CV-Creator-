@@ -57,6 +57,11 @@ export async function POST(request) {
       format: "A4",
       printBackground: true,
       margin: { top: "18mm", bottom: "18mm", left: "18mm", right: "18mm" },
+      // Tagged (accessible) PDF adds an extra layer of structure/marked-content
+      // nesting on top of Chromium's own per-run ActualText mapping for RTL
+      // text. It isn't needed here and some PDF readers' text-selection
+      // handles the resulting nested marked content poorly for Arabic.
+      tagged: false,
     });
 
     const safeName = (form?.name || "CV").replace(/\s+/g, "_");
