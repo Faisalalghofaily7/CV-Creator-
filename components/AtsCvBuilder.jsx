@@ -8,16 +8,16 @@ import { buildCvPdf } from "../lib/cvPdfLayout";
 import { CV_LABELS } from "../lib/cvLabels";
 
 // ── Design tokens ──────────────────────────────────────────────
-// "Official HR file" identity: ink navy + brass on warm paper.
+// "Official HR file" identity: formal black & white / grayscale.
 const C = {
-  ink: "#14283c",
-  paper: "#f6f3ec",
-  paperCard: "#fffdf8",
-  brass: "#a67c34",
-  brassSoft: "#c9a55f",
-  slate: "#4a5568",
-  line: "#e0d9ca",
-  ok: "#2f7d5b",
+  ink: "#000000",
+  paper: "#ffffff",
+  paperCard: "#ffffff",
+  brass: "#000000",
+  brassSoft: "#555555",
+  slate: "#333333",
+  line: "#d0d0d0",
+  ok: "#000000",
 };
 
 const STEPS = [
@@ -381,13 +381,13 @@ export default function AtsCvBuilder() {
 
 // ── Reusable pieces ──
 function SectionTitle({ children }) {
-  return <div style={{ fontSize: 16, fontWeight: 700, color: "#14283c", marginBottom: 18 }}>{children}</div>;
+  return <div style={{ fontSize: 16, fontWeight: 700, color: "#000000", marginBottom: 18 }}>{children}</div>;
 }
 
 function Section({ title, children }) {
   return (
     <div style={{ marginBottom: 15 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: "#a67c34", letterSpacing: 0.5, marginBottom: 7, borderBottom: "1px solid #e0d9ca", paddingBottom: 3 }}>{title}</div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#000000", letterSpacing: 0.5, marginBottom: 7, borderBottom: "1px solid #d0d0d0", paddingBottom: 3 }}>{title}</div>
       {children}
     </div>
   );
@@ -396,7 +396,7 @@ function Section({ title, children }) {
 function field(label, val, onChange, opts = {}) {
   return (
     <div style={{ marginBottom: 14 }}>
-      <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#a67c34" }}>*</span>}</label>
+      <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#000000" }}>*</span>}</label>
       <input value={val} onChange={onChange} placeholder={opts.ph} style={inputStyle} />
       {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
     </div>
@@ -406,7 +406,7 @@ function field(label, val, onChange, opts = {}) {
 function fieldArea(label, val, onChange, opts = {}) {
   return (
     <div style={{ marginBottom: 14 }}>
-      <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#a67c34" }}>*</span>}</label>
+      <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#000000" }}>*</span>}</label>
       <textarea value={val} onChange={onChange} placeholder={opts.ph} rows={opts.rows || 4} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.8 }} />
       {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
     </div>
@@ -414,30 +414,30 @@ function fieldArea(label, val, onChange, opts = {}) {
 }
 
 // ── Styles ──
-const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#14283c", marginBottom: 6 };
-const hintStyle = { fontSize: 11.5, color: "#4a5568", marginTop: 5, lineHeight: 1.5 };
-const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d8d0be", background: "#fffdf8", fontSize: 13.5, color: "#14283c", fontFamily: "inherit", boxSizing: "border-box" };
+const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#000000", marginBottom: 6 };
+const hintStyle = { fontSize: 11.5, color: "#333333", marginTop: 5, lineHeight: 1.5 };
+const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #cccccc", background: "#ffffff", fontSize: 13.5, color: "#000000", fontFamily: "inherit", boxSizing: "border-box" };
 
-const cvPage = { width: "210mm", minHeight: "297mm", background: "#fffdf8", padding: "18mm 16mm", boxShadow: "0 2px 16px rgba(20,40,60,.12)", boxSizing: "border-box" };
-const pBody = { margin: 0, fontSize: 13, lineHeight: 1.85, color: "#4a5568", textAlign: "justify" };
+const cvPage = { width: "210mm", minHeight: "297mm", background: "#ffffff", padding: "18mm 16mm", boxShadow: "0 2px 16px rgba(20,40,60,.12)", boxSizing: "border-box" };
+const pBody = { margin: 0, fontSize: 13, lineHeight: 1.85, color: "#333333", textAlign: "justify" };
 const ulBody = (dir) => ({ margin: "5px 0 0", [dir === "ltr" ? "paddingLeft" : "paddingRight"]: 18, listStyle: "none" });
-const liBody = (dir) => ({ fontSize: 12.5, lineHeight: 1.7, color: "#4a5568", position: "relative", [dir === "ltr" ? "paddingLeft" : "paddingRight"]: 12, marginBottom: 3 });
-const skillCat = { fontWeight: 700, color: "#14283c", fontSize: 12.5 };
+const liBody = (dir) => ({ fontSize: 12.5, lineHeight: 1.7, color: "#333333", position: "relative", [dir === "ltr" ? "paddingLeft" : "paddingRight"]: 12, marginBottom: 3 });
+const skillCat = { fontWeight: 700, color: "#000000", fontSize: 12.5 };
 
-const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#14283c", color: "#fffdf8", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
-const btnGhost = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#14283c", border: "1px solid #d8d0be", borderRadius: 8, padding: "11px 18px", fontSize: 14, fontWeight: 600, fontFamily: "inherit" };
-const btnGhostLight = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#fffdf8", border: "1px solid #c9a55f", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
-const btnBrass = { display: "inline-flex", alignItems: "center", gap: 7, background: "#a67c34", color: "#fffdf8", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
-const btnAdd = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#a67c34", border: "1.5px dashed #c9a55f", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%", justifyContent: "center" };
+const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#000000", color: "#ffffff", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
+const btnGhost = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#000000", border: "1px solid #cccccc", borderRadius: 8, padding: "11px 18px", fontSize: 14, fontWeight: 600, fontFamily: "inherit" };
+const btnGhostLight = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#ffffff", border: "1px solid #555555", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
+const btnBrass = { display: "inline-flex", alignItems: "center", gap: 7, background: "#000000", color: "#ffffff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
+const btnAdd = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#000000", border: "1.5px dashed #555555", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%", justifyContent: "center" };
 const btnIcon = { background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex" };
 
 const printCSS = `
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  li:before { content: "▪"; position: absolute; right: 0; color: #a67c34; font-size: 8pt; top: 2px; }
+  li:before { content: "▪"; position: absolute; right: 0; color: #000000; font-size: 8pt; top: 2px; }
   [dir="ltr"] li:before { right: auto; left: 0; }
   input::placeholder, textarea::placeholder { color: #a8a294; }
-  button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #a67c34; outline-offset: 1px; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #000000; outline-offset: 1px; }
   @media print {
     .no-print { display: none !important; }
     body { background: #fff !important; }
