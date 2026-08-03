@@ -1,5 +1,5 @@
-import AtsCvBuilder from "../components/AtsCvBuilder";
+import UserFlow from "../components/UserFlow";
 
 export default function Page() {
-  return <AtsCvBuilder />;
+  return <UserFlow />;
 }
