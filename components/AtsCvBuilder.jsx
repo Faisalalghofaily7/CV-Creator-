@@ -2,9 +2,6 @@
 
 import React, { useState } from "react";
 import { FileText, Download, ChevronLeft, ChevronRight, Plus, Trash2, User, Briefcase, GraduationCap, Award, Wrench, CheckCircle2, Loader2 } from "lucide-react";
-import jsPDF from "jspdf";
-import { embedArabicFonts } from "../lib/pdfText";
-import { buildCvPdf } from "../lib/cvPdfLayout";
 import { CV_LABELS } from "../lib/cvLabels";
 
 // ── Design tokens ──────────────────────────────────────────────
@@ -87,13 +84,23 @@ export default function AtsCvBuilder() {
   async function downloadPDF() {
     setDownloading(true);
     try {
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      await embedArabicFonts(pdf);
-      pdf.setFont("Amiri", "normal");
-      buildCvPdf(pdf, { form, experiences, education, techSkills, softSkills, splitLines, splitList, lang: cvLang });
+      const res = await fetch("/api/generate-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ form, experiences, education, techSkills, softSkills, lang: cvLang }),
+      });
+      if (!res.ok) throw new Error("PDF generation failed");
 
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
       const safeName = (form.name || "CV").replace(/\s+/g, "_");
-      pdf.save(`${safeName}_CV.pdf`);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${safeName}_CV.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     } catch (e) {
       alert("تعذّر إنشاء الملف. حاول مرة أخرى.");
     } finally {
@@ -372,7 +379,7 @@ export default function AtsCvBuilder() {
         </div>
 
         <div style={{ textAlign: "center", marginTop: 16, fontSize: 11.5, color: C.slate }}>
-          كل البيانات تُعالَج داخل متصفحك فقط — لا يتم إرسالها أو حفظها في أي مكان.
+          بياناتك تُستخدَم فقط لتوليد ملف PDF عند الضغط على "تحميل PDF"، ولا تُحفظ على أي خادم.
         </div>
       </div>
     </div>
@@ -387,7 +394,7 @@ function SectionTitle({ children }) {
 function Section({ title, children }) {
   return (
     <div style={{ marginBottom: 15 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: "#000000", letterSpacing: 0.5, marginBottom: 7, borderBottom: "1px solid #d0d0d0", paddingBottom: 3 }}>{title}</div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#000000", letterSpacing: 0.5, lineHeight: 1.8, marginBottom: 7, borderBottom: "1px solid #d0d0d0", paddingBottom: 8 }}>{title}</div>
       {children}
     </div>
   );
