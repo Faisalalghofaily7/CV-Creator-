@@ -5,6 +5,7 @@ import { FileText, Download, ChevronLeft, ChevronRight, Plus, Trash2, User, Brie
 import jsPDF from "jspdf";
 import { embedArabicFonts } from "../lib/pdfText";
 import { buildCvPdf } from "../lib/cvPdfLayout";
+import { CV_LABELS } from "../lib/cvLabels";
 
 // ── Design tokens ──────────────────────────────────────────────
 // "Official HR file" identity: ink navy + brass on warm paper.
@@ -31,6 +32,9 @@ export default function AtsCvBuilder() {
   const [step, setStep] = useState(0);
   const [preview, setPreview] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [cvLang, setCvLang] = useState("ar");
+  const cvDir = cvLang === "ar" ? "rtl" : "ltr";
+  const t = CV_LABELS[cvLang];
 
   const [form, setForm] = useState({
     name: "",
@@ -86,7 +90,7 @@ export default function AtsCvBuilder() {
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       await embedArabicFonts(pdf);
       pdf.setFont("Amiri", "normal");
-      buildCvPdf(pdf, { form, experiences, education, techSkills, softSkills, splitLines, splitList });
+      buildCvPdf(pdf, { form, experiences, education, techSkills, softSkills, splitLines, splitList, lang: cvLang });
 
       const safeName = (form.name || "CV").replace(/\s+/g, "_");
       pdf.save(`${safeName}_CV.pdf`);
@@ -100,9 +104,9 @@ export default function AtsCvBuilder() {
   // ───────────────────────── PREVIEW ─────────────────────────
   if (preview) {
     return (
-      <div dir="rtl" style={{ background: C.paper, minHeight: "100vh", fontFamily: "'Segoe UI', Tahoma, sans-serif" }}>
+      <div dir={cvDir} style={{ background: C.paper, minHeight: "100vh", fontFamily: "'Segoe UI', Tahoma, sans-serif" }}>
         {/* toolbar - hidden on print */}
-        <div className="no-print" style={{ background: C.ink, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 10 }}>
+        <div dir="rtl" className="no-print" style={{ background: C.ink, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 10 }}>
           <button onClick={() => setPreview(false)} style={btnGhostLight}>
             <ChevronRight size={16} /> رجوع للتعديل
           </button>
@@ -115,7 +119,7 @@ export default function AtsCvBuilder() {
           <div className="cv-page" style={cvPage}>
             {/* Header */}
             <div style={{ borderBottom: `2.5px solid ${C.ink}`, paddingBottom: 12, marginBottom: 16 }}>
-              <div style={{ fontSize: 26, fontWeight: 800, color: C.ink, letterSpacing: 0.3 }}>{form.name || "الاسم الكامل"}</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: C.ink, letterSpacing: 0.3 }}>{form.name || t.fallbackName}</div>
               {form.targetRole && <div style={{ fontSize: 14.5, color: C.brass, fontWeight: 700, marginTop: 3 }}>{form.targetRole}</div>}
               <div style={{ fontSize: 12, color: C.slate, marginTop: 9, display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
                 {form.email && <span>✉ {form.email}</span>}
@@ -125,13 +129,13 @@ export default function AtsCvBuilder() {
             </div>
 
             {form.summary && (
-              <Section title="الملخص المهني">
+              <Section title={t.summary}>
                 <p style={pBody}>{form.summary}</p>
               </Section>
             )}
 
             {experiences.some((x) => x.title || x.employer) && (
-              <Section title="الخبرات العملية">
+              <Section title={t.experience}>
                 {experiences.filter((x) => x.title || x.employer).map((x, i) => (
                   <div key={i} style={{ marginBottom: 12 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -141,8 +145,8 @@ export default function AtsCvBuilder() {
                       {x.period && <span style={{ fontSize: 11.5, color: C.slate, fontStyle: "italic", whiteSpace: "nowrap" }}>{x.period}</span>}
                     </div>
                     {x.bullets && (
-                      <ul style={ulBody}>
-                        {splitLines(x.bullets).map((b, j) => <li key={j} style={liBody}>{b}</li>)}
+                      <ul style={ulBody(cvDir)}>
+                        {splitLines(x.bullets).map((b, j) => <li key={j} style={liBody(cvDir)}>{b}</li>)}
                       </ul>
                     )}
                   </div>
@@ -151,7 +155,7 @@ export default function AtsCvBuilder() {
             )}
 
             {education.some((x) => x.degree || x.school) && (
-              <Section title="التعليم">
+              <Section title={t.education}>
                 {education.filter((x) => x.degree || x.school).map((x, i) => (
                   <div key={i} style={{ marginBottom: 8 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -167,16 +171,16 @@ export default function AtsCvBuilder() {
             )}
 
             {(techSkills || softSkills) && (
-              <Section title="المهارات">
+              <Section title={t.skills}>
                 {techSkills && (
                   <div style={{ marginBottom: 6 }}>
-                    <span style={skillCat}>المهارات التقنية: </span>
+                    <span style={skillCat}>{t.techSkills} </span>
                     <span style={{ fontSize: 12.5, color: C.slate }}>{splitList(techSkills).join(" · ")}</span>
                   </div>
                 )}
                 {softSkills && (
                   <div>
-                    <span style={skillCat}>المهارات المهنية: </span>
+                    <span style={skillCat}>{t.softSkills} </span>
                     <span style={{ fontSize: 12.5, color: C.slate }}>{splitList(softSkills).join(" · ")}</span>
                   </div>
                 )}
@@ -184,15 +188,15 @@ export default function AtsCvBuilder() {
             )}
 
             {form.certs && (
-              <Section title="الشهادات والدورات">
-                <ul style={ulBody}>
-                  {splitLines(form.certs).map((c, i) => <li key={i} style={liBody}>{c}</li>)}
+              <Section title={t.certs}>
+                <ul style={ulBody(cvDir)}>
+                  {splitLines(form.certs).map((c, i) => <li key={i} style={liBody(cvDir)}>{c}</li>)}
                 </ul>
               </Section>
             )}
 
             {form.languages && (
-              <Section title="اللغات">
+              <Section title={t.languages}>
                 <p style={pBody}>{form.languages}</p>
               </Section>
             )}
@@ -220,6 +224,32 @@ export default function AtsCvBuilder() {
       </div>
 
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 20px 60px" }}>
+        {/* Language of the CV output (form UI itself stays Arabic) */}
+        <div style={{ background: C.paperCard, borderRadius: 10, border: `1px solid ${C.line}`, padding: "12px 16px", marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>لغة السيرة الذاتية الناتجة</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[{ code: "ar", label: "العربية" }, { code: "en", label: "English" }].map((opt) => (
+              <button
+                key={opt.code}
+                onClick={() => setCvLang(opt.code)}
+                style={{
+                  padding: "7px 18px",
+                  borderRadius: 7,
+                  border: `1px solid ${cvLang === opt.code ? C.ink : C.line}`,
+                  background: cvLang === opt.code ? C.ink : "transparent",
+                  color: cvLang === opt.code ? C.paperCard : C.slate,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Stepper */}
         <div style={{ display: "flex", gap: 6, marginBottom: 24, flexWrap: "wrap" }}>
           {STEPS.map((s, i) => {
@@ -390,8 +420,8 @@ const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, borde
 
 const cvPage = { width: "210mm", minHeight: "297mm", background: "#fffdf8", padding: "18mm 16mm", boxShadow: "0 2px 16px rgba(20,40,60,.12)", boxSizing: "border-box" };
 const pBody = { margin: 0, fontSize: 13, lineHeight: 1.85, color: "#4a5568", textAlign: "justify" };
-const ulBody = { margin: "5px 0 0", paddingRight: 18, listStyle: "none" };
-const liBody = { fontSize: 12.5, lineHeight: 1.7, color: "#4a5568", position: "relative", paddingRight: 12, marginBottom: 3 };
+const ulBody = (dir) => ({ margin: "5px 0 0", [dir === "ltr" ? "paddingLeft" : "paddingRight"]: 18, listStyle: "none" });
+const liBody = (dir) => ({ fontSize: 12.5, lineHeight: 1.7, color: "#4a5568", position: "relative", [dir === "ltr" ? "paddingLeft" : "paddingRight"]: 12, marginBottom: 3 });
 const skillCat = { fontWeight: 700, color: "#14283c", fontSize: 12.5 };
 
 const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#14283c", color: "#fffdf8", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
@@ -405,6 +435,7 @@ const printCSS = `
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   li:before { content: "▪"; position: absolute; right: 0; color: #a67c34; font-size: 8pt; top: 2px; }
+  [dir="ltr"] li:before { right: auto; left: 0; }
   input::placeholder, textarea::placeholder { color: #a8a294; }
   button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #a67c34; outline-offset: 1px; }
   @media print {
