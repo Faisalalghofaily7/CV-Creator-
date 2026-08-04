@@ -5,10 +5,10 @@ import AccessGate from "./AccessGate";
 import AtsCvBuilder from "./AtsCvBuilder";
 
 export default function UserFlow() {
-  const [unlocked, setUnlocked] = useState(false);
+  const [accessCode, setAccessCode] = useState(null);
 
-  if (!unlocked) {
-    return <AccessGate onContinue={() => setUnlocked(true)} />;
+  if (!accessCode) {
+    return <AccessGate onContinue={(code) => setAccessCode(code)} />;
   }
-  return <AtsCvBuilder />;
+  return <AtsCvBuilder accessCode={accessCode} />;
 }

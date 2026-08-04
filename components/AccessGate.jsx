@@ -30,7 +30,7 @@ export default function AccessGate({ onContinue }) {
         setError(data.error || "الكود غير صحيح أو مستخدم من قبل.");
         return;
       }
-      onContinue();
+      onContinue(code.trim());
     } catch (err) {
       setError("تعذّر الاتصال بالخادم. تحقق من اتصالك وحاول مرة أخرى.");
     } finally {

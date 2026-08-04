@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Lock, Copy, LogOut, Sparkles, Check, Loader2 } from "lucide-react";
+import { Lock, Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive } from "lucide-react";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
@@ -18,6 +18,8 @@ export default function AdminCodes() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
 
+  const [tab, setTab] = useState("codes"); // "codes" | "archive"
+
   const [codes, setCodes] = useState([]);
   const [loadingCodes, setLoadingCodes] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -25,6 +27,10 @@ export default function AdminCodes() {
   const [generateError, setGenerateError] = useState("");
   const [lastGenerated, setLastGenerated] = useState(null);
   const [copiedCode, setCopiedCode] = useState("");
+
+  const [cvs, setCvs] = useState([]);
+  const [loadingCvs, setLoadingCvs] = useState(false);
+  const [cvsError, setCvsError] = useState("");
 
   async function loadCodes() {
     setLoadingCodes(true);
@@ -41,9 +47,28 @@ export default function AdminCodes() {
     }
   }
 
+  async function loadCvs() {
+    setLoadingCvs(true);
+    setCvsError("");
+    try {
+      const res = await fetch("/api/admin/cvs");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر تحميل الأرشيف.");
+      setCvs(data.cvs || []);
+    } catch (err) {
+      setCvsError(err.message || "تعذّر تحميل الأرشيف.");
+    } finally {
+      setLoadingCvs(false);
+    }
+  }
+
   useEffect(() => {
     if (loggedIn) loadCodes();
   }, [loggedIn]);
+
+  useEffect(() => {
+    if (loggedIn && tab === "archive") loadCvs();
+  }, [loggedIn, tab]);
 
   function handleLogin(e) {
     e.preventDefault();
@@ -62,6 +87,8 @@ export default function AdminCodes() {
     setLoginError("");
     setCodes([]);
     setLastGenerated(null);
+    setCvs([]);
+    setTab("codes");
   }
 
   async function handleGenerate() {
@@ -142,9 +169,20 @@ export default function AdminCodes() {
 
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 20px 60px" }}>
         <div style={noteBanner}>
-          تنبيه: تسجيل الدخول أعلاه بيانات تجريبية ثابتة وغير آمن للإنتاج بعد — سيتم تأمينه في خطوة لاحقة. الأكواد نفسها الآن حقيقية ومحفوظة في قاعدة البيانات.
+          تنبيه: تسجيل الدخول أعلاه بيانات تجريبية ثابتة وغير آمن للإنتاج بعد — سيتم تأمينه في خطوة لاحقة. الأكواد والسير الذاتية المحفوظة أدناه حقيقية ومحفوظة في قاعدة البيانات والتخزين.
         </div>
 
+        <div style={{ display: "flex", gap: 6, marginBottom: 18 }}>
+          <button onClick={() => setTab("codes")} style={tabBtnStyle(tab === "codes")}>
+            <Sparkles size={15} /> الأكواد
+          </button>
+          <button onClick={() => setTab("archive")} style={tabBtnStyle(tab === "archive")}>
+            <Archive size={15} /> أرشيف السير الذاتية
+          </button>
+        </div>
+
+        {tab === "codes" ? (
+        <>
         <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
           <button onClick={handleGenerate} disabled={generating} style={{ ...btnPrimary, opacity: generating ? 0.7 : 1 }}>
             {generating ? <><Loader2 size={16} className="spin-admin" /> جارٍ الإنشاء...</> : <><Sparkles size={16} /> توليد كود جديد</>}
@@ -205,6 +243,47 @@ export default function AdminCodes() {
             </tbody>
           </table>
         </div>
+        </>
+        ) : (
+        <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: C.soft }}>
+                <th style={thStyle}>الكود</th>
+                <th style={thStyle}>رقم طلب سلة</th>
+                <th style={thStyle}>اسم المتقدم</th>
+                <th style={thStyle}>اللغة</th>
+                <th style={thStyle}>تاريخ الإنشاء</th>
+                <th style={thStyle}>الملف</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loadingCvs ? (
+                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
+              ) : cvsError ? (
+                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{cvsError}</td></tr>
+              ) : cvs.length === 0 ? (
+                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد سير ذاتية محفوظة بعد</td></tr>
+              ) : (
+                cvs.map((v) => (
+                  <tr key={v.id} style={{ borderTop: `1px solid ${C.line}` }}>
+                    <td style={{ ...tdStyle, fontFamily: "monospace", fontWeight: 700 }}>{v.code}</td>
+                    <td style={tdStyle}>{v.salla_order_number || "—"}</td>
+                    <td style={tdStyle}>{v.applicant_name || "—"}</td>
+                    <td style={tdStyle}>{v.pdf_language === "en" ? "English" : "العربية"}</td>
+                    <td style={{ ...tdStyle, color: C.slate, fontSize: 12 }}>{v.generated_at ? new Date(v.generated_at).toLocaleString("ar-SA") : "—"}</td>
+                    <td style={tdStyle}>
+                      <a href={`/api/admin/cvs/${v.id}/pdf`} target="_blank" rel="noreferrer" style={btnViewLink}>
+                        <FileText size={14} /> عرض / تحميل
+                      </a>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        )}
       </div>
       <style>{`.spin-admin { animation: spin-admin 1s linear infinite; } @keyframes spin-admin { to { transform: rotate(360deg); } }`}</style>
     </div>
@@ -219,5 +298,15 @@ const btnIcon = { background: "transparent", border: "none", cursor: "pointer", 
 const noteBanner = { background: "#e8eef4", border: "1px dashed #dde4ec", borderRadius: 8, padding: "10px 14px", fontSize: 12.5, color: "#3a4a5a", marginBottom: 20, textAlign: "center", lineHeight: 1.6 };
 const thStyle = { textAlign: "start", padding: "10px 14px", fontSize: 12, fontWeight: 700, color: "#1a3a5c", borderBottom: "1px solid #dde4ec" };
 const tdStyle = { padding: "10px 14px", fontSize: 12.5, color: "#1a3a5c", verticalAlign: "middle" };
+const btnViewLink = { display: "inline-flex", alignItems: "center", gap: 6, background: "#1a3a5c", color: "#ffffff", borderRadius: 6, padding: "5px 10px", fontSize: 12, fontWeight: 600, textDecoration: "none" };
+function tabBtnStyle(active) {
+  return {
+    display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 8,
+    border: `1px solid ${active ? "#1a3a5c" : "#dde4ec"}`,
+    background: active ? "#1a3a5c" : "#ffffff",
+    color: active ? "#ffffff" : "#3a4a5a",
+    fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+  };
+}
 const statusBadge = { display: "inline-block", background: "#1a3a5c", color: "#ffffff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 10px" };
 const statusBadgeUsed = { display: "inline-block", background: "#8a8f98", color: "#ffffff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 10px" };

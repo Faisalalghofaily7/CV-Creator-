@@ -90,7 +90,7 @@ const STEPS = [
   { key: "certs", label: "الشهادات", icon: Award },
 ];
 
-export default function AtsCvBuilder() {
+export default function AtsCvBuilder({ accessCode }) {
   const [step, setStep] = useState(0);
   const [preview, setPreview] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -386,6 +386,7 @@ export default function AtsCvBuilder() {
           techSkills: techSkillsStr,
           softSkills: softSkillsStr,
           lang: cvLang,
+          accessCode,
         }),
       });
       if (!res.ok) throw new Error("PDF generation failed");

@@ -2,6 +2,7 @@ import fs from "fs";
 import { NextResponse } from "next/server";
 import puppeteer from "puppeteer-core";
 import { buildCvHtml } from "../../../lib/cvHtmlTemplate";
+import { archiveGeneratedPdf } from "../../../lib/cvArchive";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -43,7 +44,7 @@ export async function POST(request) {
   let browser;
   try {
     const body = await request.json();
-    const { form, experiences, education, techSkills, softSkills, lang } = body;
+    const { form, experiences, education, techSkills, softSkills, lang, accessCode } = body;
 
     const splitLines = (t) => t.split("\n").map((l) => l.trim()).filter(Boolean);
     const splitList = (t) => t.split(/[،,\n]/).map((l) => l.trim()).filter(Boolean);
@@ -63,6 +64,11 @@ export async function POST(request) {
       // handles the resulting nested marked content poorly for Arabic.
       tagged: false,
     });
+
+    // Best-effort archival for the admin panel — awaited so it actually runs
+    // to completion in this serverless invocation, but it never throws, so
+    // a Blob/DB failure here can't stop the user from getting their PDF.
+    await archiveGeneratedPdf({ accessCode, pdfBuffer, applicantName: form?.name, lang });
 
     const safeName = (form?.name || "CV").replace(/\s+/g, "_");
     const fileName = `${safeName}_CV.pdf`;
