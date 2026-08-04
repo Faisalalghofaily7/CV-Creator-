@@ -25,3 +25,14 @@ CREATE TABLE IF NOT EXISTS admin_sessions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at TIMESTAMPTZ NOT NULL
 );
+
+-- User sessions: lets someone who already validated a code at the gate
+-- resume their form after a page refresh without re-entering it. The code
+-- itself stays 'available' (not consumed) until a PDF is actually exported
+-- successfully — see /api/generate-pdf.
+CREATE TABLE IF NOT EXISTS user_sessions (
+  token TEXT PRIMARY KEY,
+  code TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);

@@ -398,7 +398,10 @@ export default function AtsCvBuilder({ accessCode }) {
           accessCode,
         }),
       });
-      if (!res.ok) throw new Error("PDF generation failed");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "PDF generation failed");
+      }
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -424,7 +427,7 @@ export default function AtsCvBuilder({ accessCode }) {
       setExportCompleted(true);
     } catch (e) {
       if (iosTab) iosTab.close();
-      setExportError("تعذّر إنشاء الملف. تحقّق من اتصالك وحاول مرة أخرى.");
+      setExportError(e.message && e.message !== "PDF generation failed" ? e.message : "تعذّر إنشاء الملف. تحقّق من اتصالك وحاول مرة أخرى.");
     } finally {
       setDownloading(false);
     }

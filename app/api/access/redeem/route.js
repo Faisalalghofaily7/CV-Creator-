@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSql } from "../../../../lib/db";
+import { createUserSession, setSessionCookie } from "../../../../lib/userSession";
 
 export const runtime = "nodejs";
 
@@ -14,13 +15,14 @@ export async function POST(request) {
     }
 
     const sql = getSql();
-    // A single conditional UPDATE both checks and consumes the code
-    // atomically — if two requests race for the same code, only the first
-    // one's WHERE clause still matches "available" and flips it to "used";
-    // the second gets back zero rows, exactly like an already-used code.
+    // Validates the code and records the order number, but does NOT
+    // consume it — the code stays 'available' until a PDF is actually
+    // exported successfully (see /api/generate-pdf), so refreshing the
+    // page or backing out before exporting never costs the user their
+    // single-use code.
     const [row] = await sql`
       UPDATE access_codes
-      SET status = 'used', used_at = now(), salla_order_number = ${sallaOrderNumber}
+      SET salla_order_number = ${sallaOrderNumber}
       WHERE code = ${code} AND status = 'available'
       RETURNING id
     `;
@@ -28,9 +30,15 @@ export async function POST(request) {
     if (!row) {
       return NextResponse.json({ error: "الكود غير صحيح أو مستخدم من قبل." }, { status: 400 });
     }
-    return NextResponse.json({ ok: true });
+
+    // Remembers the validated code in a server-side session so a page
+    // refresh can resume the same code instead of forcing re-entry.
+    const { token, maxAgeSeconds } = await createUserSession(code);
+    const res = NextResponse.json({ ok: true });
+    setSessionCookie(res, token, maxAgeSeconds);
+    return res;
   } catch (err) {
-    console.error("Failed to redeem access code:", err);
+    console.error("Failed to validate access code:", err);
     return NextResponse.json({ error: "تعذّر الاتصال بالخادم. حاول مرة أخرى." }, { status: 500 });
   }
 }

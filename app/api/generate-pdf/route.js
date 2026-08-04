@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import puppeteer from "puppeteer-core";
 import { buildCvHtml } from "../../../lib/cvHtmlTemplate";
 import { archiveGeneratedPdf } from "../../../lib/cvArchive";
+import { getSql } from "../../../lib/db";
+import { destroySessionsForCode, clearSessionCookie } from "../../../lib/userSession";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -46,6 +48,20 @@ export async function POST(request) {
     const body = await request.json();
     const { form, experiences, education, techSkills, softSkills, lang, accessCode } = body;
 
+    const code = typeof accessCode === "string" ? accessCode.trim() : "";
+    if (!code) {
+      return NextResponse.json({ error: "لا يوجد كود دخول صالح لهذه الجلسة." }, { status: 400 });
+    }
+
+    const sql = getSql();
+    // Read-only pre-check: fails fast on an already-used/unknown code
+    // before spending time launching Chromium. The code isn't consumed
+    // here — only after the PDF below is actually generated.
+    const [existing] = await sql`SELECT status FROM access_codes WHERE code = ${code}`;
+    if (!existing || existing.status !== "available") {
+      return NextResponse.json({ error: "الكود غير صالح أو تم استخدامه من قبل." }, { status: 409 });
+    }
+
     const splitLines = (t) => t.split("\n").map((l) => l.trim()).filter(Boolean);
     const splitList = (t) => t.split(/[،,\n]/).map((l) => l.trim()).filter(Boolean);
 
@@ -65,10 +81,28 @@ export async function POST(request) {
       tagged: false,
     });
 
+    // Only now — after the PDF has actually been generated — is the code
+    // consumed. A single conditional UPDATE both re-checks and consumes it
+    // atomically (so a concurrent request for the same code can't double-
+    // spend it); if PDF generation had thrown above, we'd never reach here
+    // and the code would stay 'available' for the user to retry.
+    const [consumed] = await sql`
+      UPDATE access_codes
+      SET status = 'used', used_at = now()
+      WHERE code = ${code} AND status = 'available'
+      RETURNING id
+    `;
+    if (!consumed) {
+      return NextResponse.json({ error: "الكود غير صالح أو تم استخدامه من قبل." }, { status: 409 });
+    }
+    // The code's session (used to survive page refreshes before export) is
+    // done its job now that the code itself is consumed.
+    destroySessionsForCode(code);
+
     // Best-effort archival for the admin panel — awaited so it actually runs
     // to completion in this serverless invocation, but it never throws, so
     // a Blob/DB failure here can't stop the user from getting their PDF.
-    await archiveGeneratedPdf({ accessCode, pdfBuffer, applicantName: form?.name, lang });
+    await archiveGeneratedPdf({ accessCode: code, pdfBuffer, applicantName: form?.name, lang });
 
     const safeName = (form?.name || "CV").replace(/\s+/g, "_");
     const fileName = `${safeName}_CV.pdf`;
@@ -76,13 +110,17 @@ export async function POST(request) {
     // Arabic names need the RFC 5987 filename* form, with an ASCII fallback
     // for older clients that don't understand it.
     const asciiFallback = fileName.replace(/[^\x20-\x7e]/g, "_");
-    return new NextResponse(pdfBuffer, {
+    const res = new NextResponse(pdfBuffer, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
       },
     });
+    // The code is consumed — nothing left to resume, so the session cookie
+    // no longer resolves to anything and can be cleared.
+    clearSessionCookie(res);
+    return res;
   } catch (err) {
     console.error("PDF generation failed:", err);
     return NextResponse.json({ error: err.message || "PDF generation failed" }, { status: 500 });
