@@ -97,6 +97,14 @@ export default function AtsCvBuilder({ accessCode }) {
   const [cvLang, setCvLang] = useState("ar");
   const [langConfirmed, setLangConfirmed] = useState(false);
   const [blockedField, setBlockedField] = useState(null);
+  // Export confirmation flow: the access code is single-use, so exporting
+  // must be an explicit, confirmed action. `exportCompleted` only flips to
+  // true after a PDF has actually finished downloading successfully — a
+  // failed attempt (network/server error) must leave it false so the user
+  // can retry without losing their code.
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportCompleted, setExportCompleted] = useState(false);
+  const [exportError, setExportError] = useState("");
   const cvDir = cvLang === "ar" ? "rtl" : "ltr";
   const t = CV_LABELS[cvLang];
 
@@ -356,6 +364,7 @@ export default function AtsCvBuilder({ accessCode }) {
 
   async function downloadPDF() {
     setDownloading(true);
+    setExportError("");
     // iOS Safari doesn't support forced downloads (the `download` attribute
     // is ignored) and revoking a blob: URL right after triggering it — as a
     // desktop-style anchor click normally does — races Safari's own async
@@ -408,9 +417,14 @@ export default function AtsCvBuilder({ accessCode }) {
       // Give the browser time to actually open/consume the blob URL before
       // freeing it — revoking too early is what causes the iOS Safari error.
       setTimeout(() => URL.revokeObjectURL(url), 30000);
+
+      // Only reached on a successful download — this is the single place
+      // the session gets marked complete, per the single-use access code.
+      setShowExportModal(false);
+      setExportCompleted(true);
     } catch (e) {
       if (iosTab) iosTab.close();
-      alert("تعذّر إنشاء الملف. حاول مرة أخرى.");
+      setExportError("تعذّر إنشاء الملف. تحقّق من اتصالك وحاول مرة أخرى.");
     } finally {
       setDownloading(false);
     }
@@ -469,10 +483,69 @@ export default function AtsCvBuilder({ accessCode }) {
           <button onClick={() => setPreview(false)} style={btnGhostLight}>
             <ChevronRight size={16} /> رجوع للتعديل
           </button>
-          <button onClick={downloadPDF} disabled={downloading} style={{ ...btnBrass, opacity: downloading ? 0.7 : 1 }}>
-            {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التحميل...</> : <><Download size={16} /> تحميل PDF</>}
-          </button>
+          {exportCompleted ? (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#ffffff", fontSize: 13, fontWeight: 700 }}>
+              <CheckCircle2 size={16} /> تم التصدير
+            </div>
+          ) : (
+            <button
+              onClick={() => { setExportError(""); setShowExportModal(true); }}
+              disabled={downloading}
+              style={{ ...btnBrass, opacity: downloading ? 0.7 : 1 }}
+            >
+              {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التحميل...</> : <><Download size={16} /> تحميل PDF</>}
+            </button>
+          )}
         </div>
+
+        {exportCompleted && (
+          <div dir="rtl" className="no-print" style={{ background: THEME.soft, borderBottom: `1px solid ${THEME.border}`, padding: "14px 20px", textAlign: "center" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, color: THEME.primary, fontSize: 13.5, fontWeight: 700, lineHeight: 1.7 }}>
+              <CheckCircle2 size={18} />
+              تم تصدير سيرتك الذاتية بنجاح. لإنشاء سيرة جديدة، يرجى تقديم طلب جديد.
+            </div>
+          </div>
+        )}
+
+        {showExportModal && (
+          <div
+            role="presentation"
+            onClick={() => { if (!downloading) { setShowExportModal(false); setExportError(""); } }}
+            style={{ position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 100 }}
+          >
+            <div
+              dir="rtl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="export-modal-title"
+              aria-describedby="export-modal-desc"
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: "100%", maxWidth: 430, background: THEME.card, borderRadius: 14, padding: 26, boxShadow: "0 12px 40px rgba(18,41,63,.4)" }}
+            >
+              <div id="export-modal-title" style={{ fontSize: 17.5, fontWeight: 800, color: THEME.primary, marginBottom: 12 }}>
+                تأكيد تصدير السيرة الذاتية
+              </div>
+              <div id="export-modal-desc" style={{ fontSize: 13.5, color: THEME.text, lineHeight: 1.95, marginBottom: exportError ? 12 : 22 }}>
+                بمجرد تصدير سيرتك الذاتية، سيُعتبر طلبك مكتملاً. لإنشاء سيرة جديدة أو إجراء تعديلات لاحقاً، ستحتاج إلى تقديم طلب جديد والحصول على رمز جديد. هل أنت متأكد من رغبتك في التصدير الآن؟
+              </div>
+              {exportError && (
+                <div style={{ ...warnStyle, background: "#fbeaea", borderRadius: 8, padding: "10px 12px", marginBottom: 22 }}>{exportError}</div>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button onClick={downloadPDF} disabled={downloading} style={{ ...btnPrimary, width: "100%", opacity: downloading ? 0.7 : 1, cursor: downloading ? "wait" : "pointer" }}>
+                  {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التصدير...</> : "نعم، تصدير السيرة"}
+                </button>
+                <button
+                  onClick={() => { setShowExportModal(false); setExportError(""); }}
+                  disabled={downloading}
+                  style={{ ...btnGhost, width: "100%", justifyContent: "center", opacity: downloading ? 0.5 : 1, cursor: downloading ? "not-allowed" : "pointer" }}
+                >
+                  رجوع للتعديل
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div style={{ display: "flex", justifyContent: "center", padding: "24px 12px 60px" }}>
           <div className="cv-page" style={cvPage}>
