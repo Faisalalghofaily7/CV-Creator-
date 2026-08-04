@@ -1,21 +1,41 @@
 "use client";
 
 import React, { useState } from "react";
-import { KeyRound } from "lucide-react";
+import { KeyRound, Loader2 } from "lucide-react";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec" };
 
 export default function AccessGate({ onContinue }) {
   const [code, setCode] = useState("");
   const [orderNumber, setOrderNumber] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (!code.trim() || !orderNumber.trim()) {
       alert("الرجاء إدخال الكود ورقم الطلب.");
       return;
     }
-    onContinue();
+    setSubmitting(true);
+    setError("");
+    try {
+      const res = await fetch("/api/access/redeem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: code.trim(), sallaOrderNumber: orderNumber.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "الكود غير صحيح أو مستخدم من قبل.");
+        return;
+      }
+      onContinue();
+    } catch (err) {
+      setError("تعذّر الاتصال بالخادم. تحقق من اتصالك وحاول مرة أخرى.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -35,8 +55,13 @@ export default function AccessGate({ onContinue }) {
         <label style={{ ...labelStyle, marginTop: 14 }}>رقم طلب سلة</label>
         <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} style={inputStyle} placeholder="مثال: 10234" />
 
-        <button type="submit" style={{ ...btnPrimary, width: "100%", marginTop: 20 }}>متابعة</button>
+        {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#b3261e", fontWeight: 600 }}>{error}</div>}
+
+        <button type="submit" disabled={submitting} style={{ ...btnPrimary, width: "100%", marginTop: 20, opacity: submitting ? 0.7 : 1 }}>
+          {submitting ? <><Loader2 size={16} className="spin-gate" /> جارٍ التحقق...</> : "متابعة"}
+        </button>
       </form>
+      <style>{`.spin-gate { animation: spin-gate 1s linear infinite; } @keyframes spin-gate { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

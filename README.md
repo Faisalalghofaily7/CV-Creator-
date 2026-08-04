@@ -19,10 +19,56 @@ npm run dev
 - `lib/cvHtmlTemplate.js` — يبني قالب الـ HTML للسيرة الذاتية (نفس المحتوى في الحالتين العربية والإنجليزية).
 - `lib/cvLabels.js` — عناوين الأقسام بالعربية والإنجليزية (مشتركة بين المعاينة وملف الـ PDF).
 - `lib/cvFontData.js` — خط Tajawal (رخصة SIL Open Font License) مُضمَّن كـ base64 داخل قالب الـ HTML.
+- `lib/db.js` — عميل قاعدة البيانات (Neon serverless driver)، يُستخدم فقط من نقاط النهاية (API routes) على الخادم.
+- `app/api/admin/codes/route.js` و`app/api/admin/codes/[id]/route.js` — عرض/إنشاء/تعديل أكواد الدخول (لوحة المشرف).
+- `app/api/access/redeem/route.js` — التحقق من كود الدخول وتفعيله (بوابة المستخدم).
+- `components/AdminCodes.jsx` — لوحة المشرف الحقيقية (تسجيل دخول تجريبي + جدول أكواد من قاعدة البيانات).
+- `components/AccessGate.jsx` — بوابة دخول المستخدم، تتحقق من الكود عبر `/api/access/redeem`.
 
 ## النشر على Vercel
 
 يستخدم توليد الـ PDF في بيئة الإنتاج حزمة `@sparticuz/chromium` (متوافقة مع Vercel Serverless) — لا حاجة لأي إعداد إضافي، فقط انشر المشروع عاديًا.
+
+## قاعدة البيانات ونظام أكواد الدخول
+
+يستخدم المشروع Neon Postgres (متصلة عبر Vercel) لتخزين أكواد الدخول الحقيقية، عبر حزمة `@neondatabase/serverless`.
+
+### الإعداد المحلي
+
+```bash
+npm install
+vercel env pull .env.development.local   # يجلب DATABASE_URL وباقي المتغيرات من مشروع Vercel
+```
+
+### إنشاء الجدول (مرة واحدة فقط)
+
+الطريقة الأسهل — بدون طرفية على جهازك:
+
+1. افتح لوحة تحكم Vercel → المشروع → تبويب **Storage** → قاعدة البيانات `neon-coquelicot-battery` → **Open in Neon Console** (أو من لوحة Neon مباشرة) → **SQL Editor**.
+2. الصق محتوى `scripts/schema.sql` التالي ونفّذه:
+
+```sql
+CREATE TABLE IF NOT EXISTS access_codes (
+  id SERIAL PRIMARY KEY,
+  code TEXT UNIQUE NOT NULL,
+  salla_order_number TEXT,
+  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'used')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  used_at TIMESTAMPTZ
+);
+```
+
+أو، إذا كنت تفضّل الطرفية على جهازك بعد سحب المتغيرات:
+
+```bash
+node --env-file=.env.development.local scripts/init-db.mjs
+```
+
+الأمر آمن للتكرار (`IF NOT EXISTS`) — تشغيله أكثر من مرة لا يضر.
+
+### ملاحظة أمان مهمة — تسجيل دخول المشرف
+
+تسجيل الدخول في `/admin` لا يزال بيانات تجريبية ثابتة (`admin` / `admin123`) مكتوبة في الواجهة، **بدون أي جلسة أو مصادقة حقيقية على الخادم**. هذا يعني أن نقاط النهاية `/api/admin/codes` نفسها غير محمية حاليًا — أي شخص يعرف الرابط يستطيع الوصول إليها مباشرة بدون المرور بشاشة الدخول. هذا مقصود مؤقتًا (حسب الطلب) لتفعيل النظام الحقيقي أولاً، لكنه **غير آمن للإنتاج إطلاقًا** ويجب تأمينه (مصادقة حقيقية على الخادم) قبل استخدام النظام مع مستخدمين فعليين.
 
 ## ملاحظة تقنية
 

@@ -1,34 +1,57 @@
 "use client";
 
-import React, { useState } from "react";
-import { Lock, Copy, LogOut, Sparkles, Check } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Lock, Copy, LogOut, Sparkles, Check, Loader2 } from "lucide-react";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
+// NOTE: this login is a client-side mock (hardcoded demo credentials, no
+// server session or token) — it gates the *screen* but not the API routes
+// below it. It is NOT production-secure and needs real authentication
+// before this goes live for real admins.
 const DEMO_USER = "admin";
 const DEMO_PASS = "admin123";
 
-function generateCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const seg = (n) => Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-  return `CV-${seg(4)}-${seg(4)}`;
-}
-
-export default function AdminMock() {
+export default function AdminCodes() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [loginError, setLoginError] = useState("");
+
   const [codes, setCodes] = useState([]);
+  const [loadingCodes, setLoadingCodes] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState("");
+  const [lastGenerated, setLastGenerated] = useState(null);
   const [copiedCode, setCopiedCode] = useState("");
+
+  async function loadCodes() {
+    setLoadingCodes(true);
+    setLoadError("");
+    try {
+      const res = await fetch("/api/admin/codes");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر تحميل الأكواد.");
+      setCodes(data.codes || []);
+    } catch (err) {
+      setLoadError(err.message || "تعذّر تحميل الأكواد.");
+    } finally {
+      setLoadingCodes(false);
+    }
+  }
+
+  useEffect(() => {
+    if (loggedIn) loadCodes();
+  }, [loggedIn]);
 
   function handleLogin(e) {
     e.preventDefault();
     if (username === DEMO_USER && password === DEMO_PASS) {
-      setError("");
+      setLoginError("");
       setLoggedIn(true);
     } else {
-      setError("اسم المستخدم أو كلمة المرور غير صحيحة.");
+      setLoginError("اسم المستخدم أو كلمة المرور غير صحيحة.");
     }
   }
 
@@ -36,15 +59,25 @@ export default function AdminMock() {
     setLoggedIn(false);
     setUsername("");
     setPassword("");
-    setError("");
+    setLoginError("");
+    setCodes([]);
+    setLastGenerated(null);
   }
 
-  function handleGenerate() {
-    const code = generateCode();
-    setCodes((prev) => [
-      { code, status: "متاح", order: "", createdAt: new Date().toLocaleString("ar-SA") },
-      ...prev,
-    ]);
+  async function handleGenerate() {
+    setGenerating(true);
+    setGenerateError("");
+    try {
+      const res = await fetch("/api/admin/codes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر إنشاء الكود.");
+      setLastGenerated(data.code);
+      setCodes((prev) => [data.code, ...prev]);
+    } catch (err) {
+      setGenerateError(err.message || "تعذّر إنشاء الكود.");
+    } finally {
+      setGenerating(false);
+    }
   }
 
   function handleCopy(code) {
@@ -53,8 +86,22 @@ export default function AdminMock() {
     setTimeout(() => setCopiedCode(""), 1500);
   }
 
-  function updateOrder(index, value) {
-    setCodes((prev) => prev.map((c, i) => (i === index ? { ...c, order: value } : c)));
+  async function updateOrder(id, value) {
+    // Optimistic update, reconciled with the server response.
+    setCodes((prev) => prev.map((c) => (c.id === id ? { ...c, salla_order_number: value } : c)));
+    try {
+      const res = await fetch(`/api/admin/codes/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sallaOrderNumber: value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر الحفظ.");
+    } catch (err) {
+      // Not critical enough to interrupt the admin — refresh from the
+      // server so the field reflects what's actually persisted.
+      loadCodes();
+    }
   }
 
   if (!loggedIn) {
@@ -74,7 +121,7 @@ export default function AdminMock() {
           <label style={{ ...labelStyle, marginTop: 14 }}>كلمة المرور</label>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} placeholder="••••••••" />
 
-          {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#b3261e" }}>{error}</div>}
+          {loginError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#b3261e" }}>{loginError}</div>}
 
           <button type="submit" style={{ ...btnPrimary, width: "100%", marginTop: 18 }}>تسجيل الدخول</button>
 
@@ -94,16 +141,21 @@ export default function AdminMock() {
       </div>
 
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 20px 60px" }}>
-        <div style={noteBanner}>نموذج تجريبي (Mock) — الأكواد لا تُحفظ فعليًا، للمعاينة فقط.</div>
+        <div style={noteBanner}>
+          تنبيه: تسجيل الدخول أعلاه بيانات تجريبية ثابتة وغير آمن للإنتاج بعد — سيتم تأمينه في خطوة لاحقة. الأكواد نفسها الآن حقيقية ومحفوظة في قاعدة البيانات.
+        </div>
 
         <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-          <button onClick={handleGenerate} style={btnPrimary}><Sparkles size={16} /> توليد كود جديد</button>
+          <button onClick={handleGenerate} disabled={generating} style={{ ...btnPrimary, opacity: generating ? 0.7 : 1 }}>
+            {generating ? <><Loader2 size={16} className="spin-admin" /> جارٍ الإنشاء...</> : <><Sparkles size={16} /> توليد كود جديد</>}
+          </button>
+          {generateError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#b3261e" }}>{generateError}</div>}
 
-          {codes.length > 0 && (
+          {lastGenerated && (
             <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10, background: C.soft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px" }}>
-              <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: 1, color: C.ink, fontFamily: "monospace" }}>{codes[0].code}</span>
-              <button onClick={() => handleCopy(codes[0].code)} style={btnIcon} title="نسخ">
-                {copiedCode === codes[0].code ? <Check size={17} color="#1a3a5c" /> : <Copy size={17} color="#1a3a5c" />}
+              <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: 1, color: C.ink, fontFamily: "monospace" }}>{lastGenerated.code}</span>
+              <button onClick={() => handleCopy(lastGenerated.code)} style={btnIcon} title="نسخ">
+                {copiedCode === lastGenerated.code ? <Check size={17} color="#1a3a5c" /> : <Copy size={17} color="#1a3a5c" />}
               </button>
             </div>
           )}
@@ -120,27 +172,33 @@ export default function AdminMock() {
               </tr>
             </thead>
             <tbody>
-              {codes.length === 0 ? (
+              {loadingCodes ? (
+                <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
+              ) : loadError ? (
+                <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{loadError}</td></tr>
+              ) : codes.length === 0 ? (
                 <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد أكواد بعد — اضغط "توليد كود جديد"</td></tr>
               ) : (
-                codes.map((c, i) => (
-                  <tr key={c.code} style={{ borderTop: `1px solid ${C.line}` }}>
+                codes.map((c) => (
+                  <tr key={c.id} style={{ borderTop: `1px solid ${C.line}` }}>
                     <td style={{ ...tdStyle, fontFamily: "monospace", fontWeight: 700 }}>
                       {c.code}
                       <button onClick={() => handleCopy(c.code)} style={{ ...btnIcon, marginInlineStart: 6 }} title="نسخ">
                         {copiedCode === c.code ? <Check size={14} /> : <Copy size={14} />}
                       </button>
                     </td>
-                    <td style={tdStyle}><span style={statusBadge}>{c.status}</span></td>
+                    <td style={tdStyle}>
+                      <span style={c.status === "used" ? statusBadgeUsed : statusBadge}>{c.status === "used" ? "مستخدم" : "متاح"}</span>
+                    </td>
                     <td style={tdStyle}>
                       <input
-                        value={c.order}
-                        onChange={(e) => updateOrder(i, e.target.value)}
+                        defaultValue={c.salla_order_number || ""}
+                        onBlur={(e) => e.target.value !== (c.salla_order_number || "") && updateOrder(c.id, e.target.value)}
                         placeholder="مثال: 10234"
                         style={{ ...inputStyle, padding: "6px 8px", fontSize: 12.5 }}
                       />
                     </td>
-                    <td style={{ ...tdStyle, color: C.slate, fontSize: 12 }}>{c.createdAt}</td>
+                    <td style={{ ...tdStyle, color: C.slate, fontSize: 12 }}>{new Date(c.created_at).toLocaleString("ar-SA")}</td>
                   </tr>
                 ))
               )}
@@ -148,6 +206,7 @@ export default function AdminMock() {
           </table>
         </div>
       </div>
+      <style>{`.spin-admin { animation: spin-admin 1s linear infinite; } @keyframes spin-admin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
@@ -157,7 +216,8 @@ const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, borde
 const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#1a3a5c", color: "#ffffff", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 const btnGhostOnDark = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#ffffff", border: "1px solid #2d5578", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
 const btnIcon = { background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "inline-flex", verticalAlign: "middle" };
-const noteBanner = { background: "#e8eef4", border: "1px dashed #dde4ec", borderRadius: 8, padding: "10px 14px", fontSize: 12.5, color: "#3a4a5a", marginBottom: 20, textAlign: "center" };
+const noteBanner = { background: "#e8eef4", border: "1px dashed #dde4ec", borderRadius: 8, padding: "10px 14px", fontSize: 12.5, color: "#3a4a5a", marginBottom: 20, textAlign: "center", lineHeight: 1.6 };
 const thStyle = { textAlign: "start", padding: "10px 14px", fontSize: 12, fontWeight: 700, color: "#1a3a5c", borderBottom: "1px solid #dde4ec" };
 const tdStyle = { padding: "10px 14px", fontSize: 12.5, color: "#1a3a5c", verticalAlign: "middle" };
 const statusBadge = { display: "inline-block", background: "#1a3a5c", color: "#ffffff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 10px" };
+const statusBadgeUsed = { display: "inline-block", background: "#8a8f98", color: "#ffffff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 10px" };

@@ -1,5 +1,5 @@
-import AdminMock from "../../components/AdminMock";
+import AdminCodes from "../../components/AdminCodes";
 
 export default function AdminPage() {
-  return <AdminMock />;
+  return <AdminCodes />;
 }
