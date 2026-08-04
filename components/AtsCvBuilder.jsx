@@ -1,8 +1,33 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { FileText, Download, ChevronLeft, ChevronRight, Plus, Trash2, User, Briefcase, GraduationCap, Award, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon } from "lucide-react";
 import { CV_LABELS } from "../lib/cvLabels";
+
+// Persists in-progress form data across page refreshes. Keyed to the
+// access code so a *different* code (a new session) never inherits a
+// previous, unrelated session's leftover data — only sessionStorage (not
+// localStorage) so it naturally disappears when the tab/browser closes.
+const PROGRESS_KEY = "cvBuilderProgress";
+
+function loadProgress(accessCode) {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(PROGRESS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.accessCode === accessCode ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearProgress() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(PROGRESS_KEY);
+  } catch {}
+}
 
 // Matches Arabic script (incl. supplement/extended blocks and presentation
 // forms) — used to block Arabic keystrokes when the chosen CV output
@@ -91,11 +116,16 @@ const STEPS = [
 ];
 
 export default function AtsCvBuilder({ accessCode }) {
-  const [step, setStep] = useState(0);
-  const [preview, setPreview] = useState(false);
+  // Read once at mount — captures whatever this access code's session had
+  // saved before a refresh, if any. A different (or absent) code yields
+  // null, so a fresh session always starts blank.
+  const [saved] = useState(() => loadProgress(accessCode));
+
+  const [step, setStep] = useState(saved?.step ?? 0);
+  const [preview, setPreview] = useState(saved?.preview ?? false);
   const [downloading, setDownloading] = useState(false);
-  const [cvLang, setCvLang] = useState("ar");
-  const [langConfirmed, setLangConfirmed] = useState(false);
+  const [cvLang, setCvLang] = useState(saved?.cvLang ?? "ar");
+  const [langConfirmed, setLangConfirmed] = useState(saved?.langConfirmed ?? false);
   const [blockedField, setBlockedField] = useState(null);
   // Export confirmation flow: the access code is single-use, so exporting
   // must be an explicit, confirmed action. `exportCompleted` only flips to
@@ -230,7 +260,7 @@ export default function AtsCvBuilder({ accessCode }) {
     );
   }
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(saved?.form ?? {
     name: "",
     email: "",
     phone: "",
@@ -241,16 +271,30 @@ export default function AtsCvBuilder({ accessCode }) {
     certs: "",
   });
 
-  const [experiences, setExperiences] = useState([
+  const [experiences, setExperiences] = useState(saved?.experiences ?? [
     { title: "", employer: "", fromMonth: "", fromYear: "", toMonth: "", toYear: "", current: false, bullets: "" },
   ]);
-  const [education, setEducation] = useState([
+  const [education, setEducation] = useState(saved?.education ?? [
     { degreeChoice: "", degreeCustom: "", specialization: "", schoolChoice: "", schoolCustom: "", year: "", detail: "" },
   ]);
-  const [techSkillTags, setTechSkillTags] = useState([]);
-  const [softSkillTags, setSoftSkillTags] = useState([]);
-  const [languageEntries, setLanguageEntries] = useState([{ name: "", level: "" }]);
+  const [techSkillTags, setTechSkillTags] = useState(saved?.techSkillTags ?? []);
+  const [softSkillTags, setSoftSkillTags] = useState(saved?.softSkillTags ?? []);
+  const [languageEntries, setLanguageEntries] = useState(saved?.languageEntries ?? [{ name: "", level: "" }]);
   const [tagDrafts, setTagDrafts] = useState({});
+
+  // Persists the current step and all form data on every change, keyed to
+  // this access code, so refreshing the page — on ANY step, including the
+  // preview — restores exactly where the user left off instead of
+  // bouncing them back to the language screen.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
+        accessCode, step, preview, cvLang, langConfirmed,
+        form, experiences, education, techSkillTags, softSkillTags, languageEntries,
+      }));
+    } catch {}
+  }, [accessCode, step, preview, cvLang, langConfirmed, form, experiences, education, techSkillTags, softSkillTags, languageEntries]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -425,6 +469,7 @@ export default function AtsCvBuilder({ accessCode }) {
       // the session gets marked complete, per the single-use access code.
       setShowExportModal(false);
       setExportCompleted(true);
+      clearProgress();
     } catch (e) {
       if (iosTab) iosTab.close();
       setExportError(e.message && e.message !== "PDF generation failed" ? e.message : "تعذّر إنشاء الملف. تحقّق من اتصالك وحاول مرة أخرى.");
