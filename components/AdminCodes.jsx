@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Lock, Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive } from "lucide-react";
+import { Lock, Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw } from "lucide-react";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
@@ -172,12 +172,22 @@ export default function AdminCodes() {
           تنبيه: تسجيل الدخول أعلاه بيانات تجريبية ثابتة وغير آمن للإنتاج بعد — سيتم تأمينه في خطوة لاحقة. الأكواد والسير الذاتية المحفوظة أدناه حقيقية ومحفوظة في قاعدة البيانات والتخزين.
         </div>
 
-        <div style={{ display: "flex", gap: 6, marginBottom: 18 }}>
-          <button onClick={() => setTab("codes")} style={tabBtnStyle(tab === "codes")}>
-            <Sparkles size={15} /> الأكواد
-          </button>
-          <button onClick={() => setTab("archive")} style={tabBtnStyle(tab === "archive")}>
-            <Archive size={15} /> أرشيف السير الذاتية
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => setTab("codes")} style={tabBtnStyle(tab === "codes")}>
+              <Sparkles size={15} /> الأكواد
+            </button>
+            <button onClick={() => setTab("archive")} style={tabBtnStyle(tab === "archive")}>
+              <Archive size={15} /> أرشيف السير الذاتية
+            </button>
+          </div>
+          <button
+            onClick={() => (tab === "archive" ? loadCvs() : loadCodes())}
+            disabled={tab === "archive" ? loadingCvs : loadingCodes}
+            style={tabBtnStyle(false)}
+            title="تحديث القائمة — البيانات لا تتحدث تلقائيًا إذا تغيّرت من جلسة أخرى"
+          >
+            <RefreshCw size={15} className={(tab === "archive" ? loadingCvs : loadingCodes) ? "spin-admin" : ""} /> تحديث
           </button>
         </div>
 
