@@ -150,6 +150,16 @@ export default function AtsCvBuilder() {
 
   async function downloadPDF() {
     setDownloading(true);
+    // iOS Safari doesn't support forced downloads (the `download` attribute
+    // is ignored) and revoking a blob: URL right after triggering it — as a
+    // desktop-style anchor click normally does — races Safari's own async
+    // handling of that URL and surfaces as "WebKitBlobResource error 1".
+    // The reliable path on iOS is to hand the PDF to Safari's built-in
+    // viewer (the user saves it from there via the Share sheet) in a tab
+    // opened synchronously *before* the network request, so it isn't
+    // blocked as a popup once we're past the awaited fetch below.
+    const isIOS = typeof navigator !== "undefined" && (/iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+    const iosTab = isIOS ? window.open("", "_blank") : null;
     try {
       const res = await fetch("/api/generate-pdf", {
         method: "POST",
@@ -160,15 +170,23 @@ export default function AtsCvBuilder() {
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const safeName = (form.name || "CV").replace(/\s+/g, "_");
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${safeName}_CV.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+
+      if (isIOS && iosTab) {
+        iosTab.location.href = url;
+      } else {
+        const safeName = (form.name || "CV").replace(/\s+/g, "_");
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${safeName}_CV.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+      // Give the browser time to actually open/consume the blob URL before
+      // freeing it — revoking too early is what causes the iOS Safari error.
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
     } catch (e) {
+      if (iosTab) iosTab.close();
       alert("تعذّر إنشاء الملف. حاول مرة أخرى.");
     } finally {
       setDownloading(false);
