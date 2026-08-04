@@ -16,3 +16,12 @@ ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS pdf_url TEXT;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS pdf_language TEXT;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_name TEXT;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
+
+-- Admin sessions: opaque random tokens (the unguessable value IS the
+-- credential — there is nothing to sign/verify beyond an exact DB match),
+-- issued on successful login and stored in an httpOnly cookie.
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);

@@ -2,13 +2,18 @@ import { NextResponse } from "next/server";
 import { get } from "@vercel/blob";
 import { getSql } from "../../../../../../lib/db";
 import { assertBlobConfigured } from "../../../../../../lib/blob";
+import { requireAdminApi } from "../../../../../../lib/adminAuth";
 
 export const runtime = "nodejs";
 
 // Streams a private Blob back to the (admin) caller. The Blob URL/pathname
 // and the read-write token never reach the browser — only the resulting
-// PDF bytes do, through this same-origin route.
+// PDF bytes do, through this same-origin route. Gated by requireAdminApi
+// since this is the actual applicant PDF (personal data).
 export async function GET(request, { params }) {
+  const authError = await requireAdminApi(request);
+  if (authError) return authError;
+
   const id = Number(params.id);
   if (!Number.isInteger(id)) {
     return NextResponse.json({ error: "معرّف غير صالح." }, { status: 400 });

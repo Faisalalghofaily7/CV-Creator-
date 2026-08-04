@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { getSql } from "../../../../lib/db";
+import { requireAdminApi } from "../../../../lib/adminAuth";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(request) {
+  const authError = await requireAdminApi(request);
+  if (authError) return authError;
+
   try {
     const sql = getSql();
     const rows = await sql`

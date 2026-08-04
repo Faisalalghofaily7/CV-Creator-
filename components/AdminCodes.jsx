@@ -1,24 +1,19 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Lock, Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw } from "lucide-react";
+import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw } from "lucide-react";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
-// NOTE: this login is a client-side mock (hardcoded demo credentials, no
-// server session or token) — it gates the *screen* but not the API routes
-// below it. It is NOT production-secure and needs real authentication
-// before this goes live for real admins.
-const DEMO_USER = "admin";
-const DEMO_PASS = "admin123";
+// Real server-side session (httpOnly cookie, checked in app/admin/page.js
+// before this component ever renders) — no credentials live here anymore.
+function redirectToLogin() {
+  window.location.assign("/admin/login");
+}
 
 export default function AdminCodes() {
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-
   const [tab, setTab] = useState("codes"); // "codes" | "archive"
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const [codes, setCodes] = useState([]);
   const [loadingCodes, setLoadingCodes] = useState(false);
@@ -37,6 +32,7 @@ export default function AdminCodes() {
     setLoadError("");
     try {
       const res = await fetch("/api/admin/codes");
+      if (res.status === 401) return redirectToLogin();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "تعذّر تحميل الأكواد.");
       setCodes(data.codes || []);
@@ -52,6 +48,7 @@ export default function AdminCodes() {
     setCvsError("");
     try {
       const res = await fetch("/api/admin/cvs");
+      if (res.status === 401) return redirectToLogin();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "تعذّر تحميل الأرشيف.");
       setCvs(data.cvs || []);
@@ -63,32 +60,23 @@ export default function AdminCodes() {
   }
 
   useEffect(() => {
-    if (loggedIn) loadCodes();
-  }, [loggedIn]);
+    loadCodes();
+  }, []);
 
   useEffect(() => {
-    if (loggedIn && tab === "archive") loadCvs();
-  }, [loggedIn, tab]);
+    if (tab === "archive") loadCvs();
+  }, [tab]);
 
-  function handleLogin(e) {
-    e.preventDefault();
-    if (username === DEMO_USER && password === DEMO_PASS) {
-      setLoginError("");
-      setLoggedIn(true);
-    } else {
-      setLoginError("اسم المستخدم أو كلمة المرور غير صحيحة.");
+  async function handleLogout() {
+    setLoggingOut(true);
+    try {
+      await fetch("/api/admin/logout", { method: "POST" });
+    } catch (err) {
+      // Ignore — redirecting to the login page either way is the correct
+      // outcome, and the session row/cookie will simply expire on its own.
+    } finally {
+      redirectToLogin();
     }
-  }
-
-  function handleLogout() {
-    setLoggedIn(false);
-    setUsername("");
-    setPassword("");
-    setLoginError("");
-    setCodes([]);
-    setLastGenerated(null);
-    setCvs([]);
-    setTab("codes");
   }
 
   async function handleGenerate() {
@@ -96,6 +84,7 @@ export default function AdminCodes() {
     setGenerateError("");
     try {
       const res = await fetch("/api/admin/codes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      if (res.status === 401) return redirectToLogin();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "تعذّر إنشاء الكود.");
       setLastGenerated(data.code);
@@ -122,6 +111,7 @@ export default function AdminCodes() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sallaOrderNumber: value }),
       });
+      if (res.status === 401) return redirectToLogin();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "تعذّر الحفظ.");
     } catch (err) {
@@ -131,45 +121,18 @@ export default function AdminCodes() {
     }
   }
 
-  if (!loggedIn) {
-    return (
-      <div dir="rtl" style={{ minHeight: "100vh", background: C.paper, fontFamily: "'Segoe UI', Tahoma, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-        <form onSubmit={handleLogin} style={{ width: "100%", maxWidth: 360, background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 28, boxShadow: "0 1px 3px rgba(20,40,60,.06)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-            <div style={{ background: C.ink, width: 40, height: 40, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Lock size={20} color="#fff" />
-            </div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: C.ink }}>تسجيل دخول المشرف</div>
-          </div>
-
-          <label style={labelStyle}>اسم المستخدم</label>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} style={inputStyle} placeholder="admin" />
-
-          <label style={{ ...labelStyle, marginTop: 14 }}>كلمة المرور</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} placeholder="••••••••" />
-
-          {loginError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#b3261e" }}>{loginError}</div>}
-
-          <button type="submit" style={{ ...btnPrimary, width: "100%", marginTop: 18 }}>تسجيل الدخول</button>
-
-          <div style={{ marginTop: 16, fontSize: 11.5, color: C.slate, background: C.soft, border: `1px dashed ${C.line}`, borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
-            بيانات تجريبية: admin / admin123
-          </div>
-        </form>
-      </div>
-    );
-  }
-
   return (
     <div dir="rtl" style={{ minHeight: "100vh", background: C.paper, fontFamily: "'Segoe UI', Tahoma, sans-serif", color: C.ink }}>
       <div style={{ background: C.ink, padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ color: "#fff", fontSize: 17, fontWeight: 700 }}>لوحة المشرف — توليد أكواد الطلبات</div>
-        <button onClick={handleLogout} style={btnGhostOnDark}><LogOut size={15} /> تسجيل الخروج</button>
+        <button onClick={handleLogout} disabled={loggingOut} style={{ ...btnGhostOnDark, opacity: loggingOut ? 0.7 : 1 }}>
+          <LogOut size={15} /> تسجيل الخروج
+        </button>
       </div>
 
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 20px 60px" }}>
         <div style={noteBanner}>
-          تنبيه: تسجيل الدخول أعلاه بيانات تجريبية ثابتة وغير آمن للإنتاج بعد — سيتم تأمينه في خطوة لاحقة. الأكواد والسير الذاتية المحفوظة أدناه حقيقية ومحفوظة في قاعدة البيانات والتخزين.
+          هذه اللوحة تحتوي بيانات شخصية حقيقية لمتقدمين (أرشيف السير الذاتية) — الوصول محمي بجلسة تسجيل دخول آمنة على الخادم.
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
@@ -300,7 +263,6 @@ export default function AdminCodes() {
   );
 }
 
-const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#3a4a5a", marginBottom: 6 };
 const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #dde4ec", background: "#ffffff", fontSize: 13.5, color: "#3a4a5a", fontFamily: "inherit", boxSizing: "border-box" };
 const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#1a3a5c", color: "#ffffff", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 const btnGhostOnDark = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#ffffff", border: "1px solid #2d5578", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };

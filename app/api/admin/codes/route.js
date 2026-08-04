@@ -1,12 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSql } from "../../../../lib/db";
+import { requireAdminApi } from "../../../../lib/adminAuth";
 
 export const runtime = "nodejs";
-
-// NOTE: the admin login gating the /admin page is still the client-side
-// mock (hardcoded demo credentials, no session/token). These endpoints are
-// not yet protected by real server-side auth — that's a follow-up step,
-// not something this change covers.
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -15,7 +11,10 @@ function generateCode() {
   return `CV-${seg(4)}-${seg(4)}`;
 }
 
-export async function GET() {
+export async function GET(request) {
+  const authError = await requireAdminApi(request);
+  if (authError) return authError;
+
   try {
     const sql = getSql();
     const rows = await sql`
@@ -31,6 +30,9 @@ export async function GET() {
 }
 
 export async function POST(request) {
+  const authError = await requireAdminApi(request);
+  if (authError) return authError;
+
   try {
     const body = await request.json().catch(() => ({}));
     const sallaOrderNumber = typeof body.sallaOrderNumber === "string" ? body.sallaOrderNumber.trim() || null : null;

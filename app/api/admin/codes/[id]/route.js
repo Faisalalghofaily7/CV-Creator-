@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { getSql } from "../../../../../lib/db";
+import { requireAdminApi } from "../../../../../lib/adminAuth";
 
 export const runtime = "nodejs";
 
 export async function PATCH(request, { params }) {
+  const authError = await requireAdminApi(request);
+  if (authError) return authError;
+
   const id = Number(params.id);
   if (!Number.isInteger(id)) {
     return NextResponse.json({ error: "معرّف غير صالح." }, { status: 400 });
