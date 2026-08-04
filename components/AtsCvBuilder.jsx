@@ -1,8 +1,13 @@
 "use client";
 
 import React, { useState } from "react";
-import { FileText, Download, ChevronLeft, ChevronRight, Plus, Trash2, User, Briefcase, GraduationCap, Award, Wrench, CheckCircle2, Loader2 } from "lucide-react";
+import { FileText, Download, ChevronLeft, ChevronRight, Plus, Trash2, User, Briefcase, GraduationCap, Award, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon } from "lucide-react";
 import { CV_LABELS } from "../lib/cvLabels";
+
+// Matches Arabic script (incl. supplement/extended blocks and presentation
+// forms) — used to block Arabic keystrokes when the chosen CV output
+// language is English, so the two languages' data never mix in the PDF.
+const ARABIC_RE = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
 
 // ── Design tokens ──────────────────────────────────────────────
 // "Official HR file" identity: formal black & white / grayscale.
@@ -45,8 +50,55 @@ export default function AtsCvBuilder() {
   const [preview, setPreview] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [cvLang, setCvLang] = useState("ar");
+  const [langConfirmed, setLangConfirmed] = useState(false);
+  const [blockedField, setBlockedField] = useState(null);
   const cvDir = cvLang === "ar" ? "rtl" : "ltr";
   const t = CV_LABELS[cvLang];
+
+  function confirmLanguage(lang) {
+    setCvLang(lang);
+    setForm((f) => ({
+      ...f,
+      // Seed a sensible example only if the user hasn't typed anything yet —
+      // never overwrite real content, and never seed the wrong language.
+      languages: f.languages || (lang === "en" ? "Arabic (Native), English (Fluent)" : "العربية (لغة أم)، الإنجليزية"),
+    }));
+    setLangConfirmed(true);
+  }
+
+  // Strips Arabic characters out of a keystroke when the CV output language
+  // is English, and flashes an inline warning near the offending field —
+  // this is what keeps English-output CVs from ending up with Arabic
+  // content mixed into the PDF.
+  function guardLangInput(id, value) {
+    if (cvLang !== "en" || !ARABIC_RE.test(value)) return value;
+    setBlockedField(id);
+    window.clearTimeout(guardLangInput._t);
+    guardLangInput._t = window.setTimeout(() => setBlockedField((cur) => (cur === id ? null : cur)), 2000);
+    return value.replace(ARABIC_RE, "");
+  }
+
+  function field(id, label, val, onChange, opts = {}) {
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#1a3a5c" }}>*</span>}</label>
+        <input value={val} onChange={(e) => onChange({ target: { value: guardLangInput(id, e.target.value) } })} placeholder={opts.ph} style={inputStyle} />
+        {blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
+      </div>
+    );
+  }
+
+  function fieldArea(id, label, val, onChange, opts = {}) {
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#1a3a5c" }}>*</span>}</label>
+        <textarea value={val} onChange={(e) => onChange({ target: { value: guardLangInput(id, e.target.value) } })} placeholder={opts.ph} rows={opts.rows || 4} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.8 }} />
+        {blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
+      </div>
+    );
+  }
 
   const [form, setForm] = useState({
     name: "",
@@ -55,7 +107,7 @@ export default function AtsCvBuilder() {
     city: "",
     targetRole: "",
     summary: "",
-    languages: "العربية (لغة أم)، الإنجليزية",
+    languages: "",
     certs: "",
   });
 
@@ -121,6 +173,50 @@ export default function AtsCvBuilder() {
     } finally {
       setDownloading(false);
     }
+  }
+
+  // ─────────────────── LANGUAGE (chosen first) ───────────────────
+  if (!langConfirmed) {
+    return (
+      <div dir="rtl" style={{ minHeight: "100vh", background: THEME.pageBg, fontFamily: "'Segoe UI', Tahoma, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ width: "100%", maxWidth: 420, background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 28, boxShadow: "0 1px 3px rgba(20,40,60,.06)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <div style={{ background: THEME.primary, width: 40, height: 40, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <LanguagesIcon size={20} color="#ffffff" />
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: THEME.primary }}>لغة السيرة الذاتية</div>
+          </div>
+          <div style={{ fontSize: 12.5, color: THEME.text, marginBottom: 20 }}>
+            اختر اللغة التي تريد أن تصدر بها سيرتك الذاتية (PDF). ستُعبَّأ بيانات النموذج بهذه اللغة فقط.
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+            {[{ code: "ar", label: "العربية" }, { code: "en", label: "English" }].map((opt) => (
+              <button
+                key={opt.code}
+                onClick={() => setCvLang(opt.code)}
+                style={{
+                  padding: "12px 16px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${cvLang === opt.code ? THEME.primary : THEME.border}`,
+                  background: cvLang === opt.code ? THEME.soft : "transparent",
+                  color: THEME.primary,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  textAlign: "start",
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          <button onClick={() => confirmLanguage(cvLang)} style={{ ...btnPrimary, width: "100%" }}>متابعة</button>
+        </div>
+      </div>
+    );
   }
 
   // ───────────────────────── PREVIEW ─────────────────────────
@@ -246,30 +342,8 @@ export default function AtsCvBuilder() {
       </div>
 
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 20px 60px" }}>
-        {/* Language of the CV output (form UI itself stays Arabic) */}
-        <div style={{ background: THEME.card, borderRadius: 10, border: `1px solid ${THEME.border}`, padding: "12px 16px", marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: THEME.primary }}>لغة السيرة الذاتية الناتجة</span>
-          <div style={{ display: "flex", gap: 6 }}>
-            {[{ code: "ar", label: "العربية" }, { code: "en", label: "English" }].map((opt) => (
-              <button
-                key={opt.code}
-                onClick={() => setCvLang(opt.code)}
-                style={{
-                  padding: "7px 18px",
-                  borderRadius: 7,
-                  border: `1px solid ${cvLang === opt.code ? THEME.primary : THEME.border}`,
-                  background: cvLang === opt.code ? THEME.primary : "transparent",
-                  color: cvLang === opt.code ? "#ffffff" : THEME.text,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+        <div style={{ textAlign: "center", marginBottom: 18, fontSize: 12.5, color: THEME.text }}>
+          لغة السيرة الذاتية الناتجة: <strong style={{ color: THEME.primary }}>{cvLang === "en" ? "English" : "العربية"}</strong>
         </div>
 
         {/* Stepper */}
@@ -295,13 +369,13 @@ export default function AtsCvBuilder() {
             <>
               <SectionTitle>البيانات الشخصية والهدف الوظيفي</SectionTitle>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                {field("الاسم الكامل", form.name, set("name"), { req: true, ph: "عادل علي الأجاجي" })}
-                {field("البريد الإلكتروني", form.email, set("email"), { ph: "name@email.com" })}
-                {field("رقم الجوال", form.phone, set("phone"), { req: true, ph: "+9665xxxxxxxx" })}
-                {field("المدينة", form.city, set("city"), { ph: "القصيم" })}
+                {field("name", "الاسم الكامل", form.name, set("name"), { req: true, ph: "عادل علي الأجاجي" })}
+                {field("email", "البريد الإلكتروني", form.email, set("email"), { ph: "name@email.com" })}
+                {field("phone", "رقم الجوال", form.phone, set("phone"), { req: true, ph: "+9665xxxxxxxx" })}
+                {field("city", "المدينة", form.city, set("city"), { ph: "القصيم" })}
               </div>
-              {field("الوظيفة المستهدفة", form.targetRole, set("targetRole"), { req: true, ph: "محاسب / محلل مالي" })}
-              {fieldArea("الملخص المهني", form.summary, set("summary"), { rows: 4, ph: "اكتب 2-3 أسطر عن خبرتك ونقاط قوتك موجّهة للوظيفة المستهدفة.", hint: "اختياري — لكنه أول ما يقرأه صاحب العمل." })}
+              {field("targetRole", "الوظيفة المستهدفة", form.targetRole, set("targetRole"), { req: true, ph: "محاسب / محلل مالي" })}
+              {fieldArea("summary", "الملخص المهني", form.summary, set("summary"), { rows: 4, ph: "اكتب 2-3 أسطر عن خبرتك ونقاط قوتك موجّهة للوظيفة المستهدفة.", hint: "اختياري — لكنه أول ما يقرأه صاحب العمل." })}
             </>
           )}
 
@@ -318,11 +392,11 @@ export default function AtsCvBuilder() {
                     )}
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    {field("المسمى الوظيفي", x.title, setExp(i, "title"), { ph: "محاسب" })}
-                    {field("جهة العمل", x.employer, setExp(i, "employer"), { ph: "شركة ..." })}
+                    {field(`exp-${i}-title`, "المسمى الوظيفي", x.title, setExp(i, "title"), { ph: "محاسب" })}
+                    {field(`exp-${i}-employer`, "جهة العمل", x.employer, setExp(i, "employer"), { ph: "شركة ..." })}
                   </div>
-                  {field("الفترة", x.period, setExp(i, "period"), { ph: "2022 - 2024" })}
-                  {fieldArea("المهام والإنجازات", x.bullets, setExp(i, "bullets"), { rows: 4, ph: "كل سطر = نقطة مستقلة:\nإعداد القيود اليومية ومراجعة الحسابات\nإعداد التقارير الضريبية وتقديمها في مواعيدها", hint: "اكتب كل مهمة في سطر. ابدأ بفعل قوي وأضف رقماً كلما أمكن." })}
+                  {field(`exp-${i}-period`, "الفترة", x.period, setExp(i, "period"), { ph: "2022 - 2024" })}
+                  {fieldArea(`exp-${i}-bullets`, "المهام والإنجازات", x.bullets, setExp(i, "bullets"), { rows: 4, ph: "كل سطر = نقطة مستقلة:\nإعداد القيود اليومية ومراجعة الحسابات\nإعداد التقارير الضريبية وتقديمها في مواعيدها", hint: "اكتب كل مهمة في سطر. ابدأ بفعل قوي وأضف رقماً كلما أمكن." })}
                 </div>
               ))}
               <button onClick={addExp} style={btnAdd}><Plus size={16} /> إضافة خبرة أخرى</button>
@@ -342,12 +416,12 @@ export default function AtsCvBuilder() {
                     )}
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    {field("الدرجة والتخصص", x.degree, setEdu(i, "degree"), { ph: "بكالوريوس المحاسبة" })}
-                    {field("الجامعة", x.school, setEdu(i, "school"), { ph: "جامعة القصيم" })}
+                    {field(`edu-${i}-degree`, "الدرجة والتخصص", x.degree, setEdu(i, "degree"), { ph: "بكالوريوس المحاسبة" })}
+                    {field(`edu-${i}-school`, "الجامعة", x.school, setEdu(i, "school"), { ph: "جامعة القصيم" })}
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    {field("سنة التخرج", x.year, setEdu(i, "year"), { ph: "2023" })}
-                    {field("المعدل (اختياري)", x.detail, setEdu(i, "detail"), { ph: "4.5 / 5 — مرتبة الشرف" })}
+                    {field(`edu-${i}-year`, "سنة التخرج", x.year, setEdu(i, "year"), { ph: "2023" })}
+                    {field(`edu-${i}-detail`, "المعدل (اختياري)", x.detail, setEdu(i, "detail"), { ph: "4.5 / 5 — مرتبة الشرف" })}
                   </div>
                 </div>
               ))}
@@ -359,9 +433,9 @@ export default function AtsCvBuilder() {
           {step === 3 && (
             <>
               <SectionTitle>المهارات واللغات</SectionTitle>
-              {fieldArea("المهارات التقنية", techSkills, (e) => setTechSkills(e.target.value), { rows: 3, ph: "التحليل المالي، إعداد القيود، Excel، برامج ERP (SAP/Oracle)، إعداد التقارير الضريبية", hint: "افصل بين المهارات بفاصلة أو سطر جديد." })}
-              {fieldArea("المهارات المهنية", softSkills, (e) => setSoftSkills(e.target.value), { rows: 2, ph: "حل المشكلات، إدارة الوقت، التواصل، العمل ضمن فريق" })}
-              {field("اللغات", form.languages, set("languages"), { ph: "العربية (لغة أم)، الإنجليزية (متقدم)" })}
+              {fieldArea("techSkills", "المهارات التقنية", techSkills, (e) => setTechSkills(e.target.value), { rows: 3, ph: "التحليل المالي، إعداد القيود، Excel، برامج ERP (SAP/Oracle)، إعداد التقارير الضريبية", hint: "افصل بين المهارات بفاصلة أو سطر جديد." })}
+              {fieldArea("softSkills", "المهارات المهنية", softSkills, (e) => setSoftSkills(e.target.value), { rows: 2, ph: "حل المشكلات، إدارة الوقت، التواصل، العمل ضمن فريق" })}
+              {field("languages", "اللغات", form.languages, set("languages"), { ph: "العربية (لغة أم)، الإنجليزية (متقدم)" })}
             </>
           )}
 
@@ -369,7 +443,7 @@ export default function AtsCvBuilder() {
           {step === 4 && (
             <>
               <SectionTitle>الشهادات المهنية والدورات</SectionTitle>
-              {fieldArea("الشهادات والدورات", form.certs, set("certs"), { rows: 5, ph: "كل شهادة في سطر:\nشهادة SOCPA\nدورة معايير IFRS\nشهادة CMA (قيد الدراسة)", hint: "اختياري — لكنه يقوّي السيرة كثيراً في مجال المحاسبة. اكتب كل شهادة في سطر." })}
+              {fieldArea("certs", "الشهادات والدورات", form.certs, set("certs"), { rows: 5, ph: "كل شهادة في سطر:\nشهادة SOCPA\nدورة معايير IFRS\nشهادة CMA (قيد الدراسة)", hint: "اختياري — لكنه يقوّي السيرة كثيراً في مجال المحاسبة. اكتب كل شهادة في سطر." })}
             </>
           )}
 
@@ -415,29 +489,10 @@ function Section({ title, children }) {
   );
 }
 
-function field(label, val, onChange, opts = {}) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#000000" }}>*</span>}</label>
-      <input value={val} onChange={onChange} placeholder={opts.ph} style={inputStyle} />
-      {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
-    </div>
-  );
-}
-
-function fieldArea(label, val, onChange, opts = {}) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#000000" }}>*</span>}</label>
-      <textarea value={val} onChange={onChange} placeholder={opts.ph} rows={opts.rows || 4} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.8 }} />
-      {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
-    </div>
-  );
-}
-
 // ── Styles (form-only — the CV preview/PDF below keeps its own black/white styling) ──
 const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#3a4a5a", marginBottom: 6 };
 const hintStyle = { fontSize: 11.5, color: "#3a4a5a", marginTop: 5, lineHeight: 1.5 };
+const warnStyle = { fontSize: 11.5, color: "#b3261e", marginTop: 5, lineHeight: 1.5, fontWeight: 600 };
 const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #dde4ec", background: "#ffffff", fontSize: 13.5, color: "#3a4a5a", fontFamily: "inherit", boxSizing: "border-box" };
 
 const cvPage = { width: "210mm", minHeight: "297mm", background: "#ffffff", padding: "18mm 16mm", boxShadow: "0 2px 16px rgba(20,40,60,.12)", boxSizing: "border-box" };
