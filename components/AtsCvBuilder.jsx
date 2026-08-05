@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { FileText, Download, ChevronLeft, ChevronRight, Plus, Trash2, User, Briefcase, GraduationCap, Award, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon, Layers } from "lucide-react";
+import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Award, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon, Layers } from "lucide-react";
 import { CV_LABELS } from "../lib/cvLabels";
 
 // Persists in-progress form data across page refreshes. Keyed to the
@@ -55,8 +55,20 @@ const EN_DEGREES = ["High School", "Diploma", "Bachelor's", "Master's", "PhD", "
 const AR_UNIVERSITIES = ["جامعة الملك سعود", "جامعة الملك عبدالعزيز", "جامعة الملك فهد للبترول والمعادن", "جامعة الإمام محمد بن سعود", "جامعة القصيم", "جامعة الملك خالد", "جامعة أم القرى", "جامعة الملك فيصل", "جامعة طيبة", "جامعة الطائف", "جامعة حائل", "جامعة تبوك", "جامعة نجران", "جامعة جازان", "جامعة الأميرة نورة", "جامعة الملك سعود للعلوم الصحية"];
 const EN_UNIVERSITIES = ["King Saud University", "King Abdulaziz University", "KFUPM", "Al-Imam Muhammad Ibn Saud Islamic University", "Qassim University", "King Khalid University", "Umm Al-Qura University", "King Faisal University", "Taibah University", "Taif University", "University of Hail", "University of Tabuk", "Najran University", "Jazan University", "Princess Nourah University", "King Saud bin Abdulaziz University for Health Sciences"];
 
-const AR_LEVELS = ["مبتدئ", "متوسط", "متقدم", "طليق", "لغة أم"];
-const EN_LEVELS = ["Beginner", "Intermediate", "Advanced", "Fluent", "Native"];
+const AR_MAJORS = ["المحاسبة", "إدارة الأعمال", "التمويل", "الاقتصاد", "نظم المعلومات الإدارية", "علوم الحاسب", "هندسة البرمجيات", "الهندسة الصناعية", "الهندسة المدنية", "الهندسة الكهربائية", "الهندسة الميكانيكية", "علوم البيانات", "الأمن السيبراني", "القانون", "التسويق", "الموارد البشرية", "الطب", "التمريض", "الصيدلة", "العلوم", "الرياضيات", "اللغة الإنجليزية", "الإعلام", "العلاقات العامة", "التصميم الجرافيكي", "السياحة والفندقة", "التربية", "علم الاجتماع"];
+const EN_MAJORS = ["Accounting", "Business Administration", "Finance", "Economics", "Management Information Systems", "Computer Science", "Software Engineering", "Industrial Engineering", "Civil Engineering", "Electrical Engineering", "Mechanical Engineering", "Data Science", "Cybersecurity", "Law", "Marketing", "Human Resources", "Medicine", "Nursing", "Pharmacy", "Science", "Mathematics", "English Language", "Media", "Public Relations", "Graphic Design", "Tourism & Hospitality", "Education", "Sociology"];
+
+const AR_LEVELS = ["مبتدئ", "متوسط", "متقدم", "متمكّن", "لغة أم"];
+const EN_LEVELS = ["Beginner", "Intermediate", "Advanced", "Proficient", "Native"];
+
+const AR_LANGUAGE_OPTIONS = ["العربية", "الإنجليزية"];
+const EN_LANGUAGE_OPTIONS = ["Arabic", "English"];
+
+const AR_TECH_SKILLS = ["Excel", "Word", "PowerPoint", "SAP", "Oracle ERP", "QuickBooks", "Power BI", "SQL", "Python", "تحليل البيانات", "إدارة قواعد البيانات", "الشبكات", "الأمن السيبراني", "Photoshop", "AutoCAD", "إدارة المشاريع (Primavera)", "Java", "تطوير المواقع"];
+const EN_TECH_SKILLS = ["Excel", "Word", "PowerPoint", "SAP", "Oracle ERP", "QuickBooks", "Power BI", "SQL", "Python", "Data Analysis", "Database Management", "Networking", "Cybersecurity", "Photoshop", "AutoCAD", "Project Management (Primavera)", "Java", "Web Development"];
+
+const AR_SOFT_SKILLS = ["العمل الجماعي", "القيادة", "التواصل الفعّال", "حل المشكلات", "إدارة الوقت", "التفكير النقدي", "العمل تحت الضغط", "خدمة العملاء", "التفاوض", "الإبداع", "التخطيط الاستراتيجي", "إدارة الفريق"];
+const EN_SOFT_SKILLS = ["Teamwork", "Leadership", "Effective Communication", "Problem Solving", "Time Management", "Critical Thinking", "Working Under Pressure", "Customer Service", "Negotiation", "Creativity", "Strategic Planning", "Team Management"];
 
 function yearRange(from, to) {
   const years = [];
@@ -77,6 +89,17 @@ function formatPeriod(x, lang) {
   if (!from && !to) return "";
   if (from && !to) return from;
   return `${from} - ${to}`;
+}
+
+// True when both dates are fully filled in and the end date is strictly
+// before the start date. Incomplete dates and "still working here" entries
+// (no end date to compare) are never flagged.
+function dateRangeInvalid(x) {
+  if (x.current) return false;
+  if (!x.fromYear || !x.fromMonth || !x.toYear || !x.toMonth) return false;
+  const from = Number(x.fromYear) * 12 + Number(x.fromMonth);
+  const to = Number(x.toYear) * 12 + Number(x.toMonth);
+  return to < from;
 }
 
 // ── Design tokens ──────────────────────────────────────────────
@@ -136,6 +159,10 @@ export default function AtsCvBuilder({ accessCode }) {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportCompleted, setExportCompleted] = useState(false);
   const [exportError, setExportError] = useState("");
+  // Shared UI state for every searchable dropdown / skill-suggestion list
+  // on the form — only one can be open at a time, keyed by field id.
+  const [openDropdown, setOpenDropdown] = useState(null);
+  const [dropdownQuery, setDropdownQuery] = useState({});
   const cvDir = cvLang === "ar" ? "rtl" : "ltr";
   const t = CV_LABELS[cvLang];
 
@@ -203,9 +230,12 @@ export default function AtsCvBuilder({ accessCode }) {
   }
 
   // Dropdown with a trailing "Other" option that reveals a guarded
-  // free-text field bound to a separate `custom` value.
+  // free-text field bound to a separate `custom` value. When
+  // opts.otherRequired is set, an inline warning shows while that field is
+  // empty (actual blocking of "Next" happens in canProceed()).
   function selectWithOther(id, label, choice, custom, onChoiceChange, onCustomChange, options, opts = {}) {
     const isOther = choice === OTHER;
+    const missingRequired = isOther && opts.otherRequired && !custom.trim();
     return (
       <div style={{ marginBottom: 14 }}>
         <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#1a3a5c" }}>*</span>}</label>
@@ -223,18 +253,77 @@ export default function AtsCvBuilder({ accessCode }) {
           />
         )}
         {isOther && blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {missingRequired && opts.otherRequiredMsg && <div style={warnStyle}>{opts.otherRequiredMsg}</div>}
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
       </div>
     );
   }
 
-  // Chip/tag input: Enter or comma commits the draft as a new tag.
+  // Text input with a filterable dropdown of suggestions, plus the same
+  // "Other" free-text fallback as selectWithOther — used where the option
+  // list is too long to scroll comfortably as a plain <select> (e.g.
+  // university majors).
+  function searchableSelect(id, label, choice, custom, onChoiceChange, onCustomChange, options, opts = {}) {
+    const isOther = choice === OTHER;
+    const isOpen = openDropdown === id;
+    const query = dropdownQuery[id] || "";
+    const filtered = query ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase())) : options;
+    const displayValue = isOpen ? query : (choice && !isOther ? choice : "");
+    const selectItem = (value) => {
+      onChoiceChange(value);
+      setOpenDropdown(null);
+      setDropdownQuery((d) => ({ ...d, [id]: "" }));
+    };
+    return (
+      <div style={{ marginBottom: 14, position: "relative" }}>
+        <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#1a3a5c" }}>*</span>}</label>
+        <input
+          value={displayValue}
+          onChange={(e) => { setDropdownQuery((d) => ({ ...d, [id]: e.target.value })); setOpenDropdown(id); }}
+          onFocus={() => { setOpenDropdown(id); setDropdownQuery((d) => ({ ...d, [id]: "" })); }}
+          onBlur={() => setTimeout(() => setOpenDropdown((cur) => (cur === id ? null : cur)), 150)}
+          placeholder={opts.ph || (cvLang === "en" ? "Search or select..." : "ابحث أو اختر...")}
+          style={inputStyle}
+        />
+        {isOpen && (
+          <div style={dropdownListStyle}>
+            {filtered.map((o) => (
+              <div key={o} onMouseDown={(e) => { e.preventDefault(); selectItem(o); }} style={dropdownItemStyle}>{o}</div>
+            ))}
+            {filtered.length === 0 && <div style={{ ...dropdownItemStyle, color: "#999", cursor: "default" }}>{cvLang === "en" ? "No matches" : "لا توجد نتائج"}</div>}
+            <div onMouseDown={(e) => { e.preventDefault(); selectItem(OTHER); }} style={{ ...dropdownItemStyle, fontWeight: 700, color: THEME.primary, borderBottom: "none" }}>
+              {cvLang === "en" ? "Other" : "أخرى"}
+            </div>
+          </div>
+        )}
+        {isOther && (
+          <input
+            value={custom}
+            onChange={(e) => onCustomChange(guardLangInput(id, e.target.value))}
+            placeholder={cvLang === "en" ? "Type here" : "اكتب هنا"}
+            style={{ ...inputStyle, marginTop: 8 }}
+          />
+        )}
+        {isOther && blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
+      </div>
+    );
+  }
+
+  // Chip/tag input: Enter or comma commits the draft as a new tag. When
+  // opts.suggestions is given, typing (or focusing) shows a filtered
+  // dropdown of predefined options — clicking one adds it directly, on top
+  // of still being able to type any custom value.
   function tagsInput(id, label, tags, setTags, opts = {}) {
     const draft = tagDrafts[id] || "";
     const setDraft = (v) => setTagDrafts((d) => ({ ...d, [id]: v }));
-    const commit = () => {
-      const parts = guardLangInput(id, draft).split(",").map((s) => s.trim()).filter(Boolean);
+    const commitValue = (raw) => {
+      const parts = guardLangInput(id, raw).split(",").map((s) => s.trim()).filter(Boolean);
       if (parts.length) setTags((prev) => [...prev, ...parts.filter((p) => !prev.includes(p))]);
+    };
+    const commit = () => { commitValue(draft); setDraft(""); };
+    const addSuggestion = (s) => {
+      if (!tags.includes(s)) setTags((prev) => [...prev, s]);
       setDraft("");
     };
     const handleKeyDown = (e) => {
@@ -245,8 +334,12 @@ export default function AtsCvBuilder({ accessCode }) {
         setTags(tags.slice(0, -1));
       }
     };
+    const suggestions = opts.suggestions
+      ? opts.suggestions.filter((s) => !tags.includes(s) && (!draft || s.toLowerCase().includes(draft.toLowerCase()))).slice(0, 8)
+      : [];
+    const isOpen = openDropdown === id && suggestions.length > 0;
     return (
-      <div style={{ marginBottom: 14 }}>
+      <div style={{ marginBottom: 14, position: "relative" }}>
         <label style={labelStyle}>{label}</label>
         <div style={{ ...inputStyle, display: "flex", flexWrap: "wrap", gap: 6, padding: 8, minHeight: 44, alignItems: "center" }}>
           {tags.map((tg, i) => (
@@ -257,14 +350,66 @@ export default function AtsCvBuilder({ accessCode }) {
           ))}
           <input
             value={draft}
-            onChange={(e) => setDraft(guardLangInput(id, e.target.value))}
+            onChange={(e) => { setDraft(guardLangInput(id, e.target.value)); if (opts.suggestions) setOpenDropdown(id); }}
             onKeyDown={handleKeyDown}
-            onBlur={commit}
+            onFocus={() => { if (opts.suggestions) setOpenDropdown(id); }}
+            onBlur={() => { setTimeout(() => setOpenDropdown((cur) => (cur === id ? null : cur)), 150); commit(); }}
             placeholder={tags.length ? "" : opts.ph}
             style={{ border: "none", outline: "none", flex: "1 1 120px", minWidth: 100, fontSize: 13.5, fontFamily: "inherit", background: "transparent", color: THEME.text }}
           />
         </div>
+        {isOpen && (
+          <div style={dropdownListStyle}>
+            {suggestions.map((s) => (
+              <div key={s} onMouseDown={(e) => { e.preventDefault(); addSuggestion(s); }} style={dropdownItemStyle}>{s}</div>
+            ))}
+          </div>
+        )}
         {blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
+      </div>
+    );
+  }
+
+  // Repeatable single-line list (each item = one discrete point), with
+  // per-item remove and reorder — used for experience bullets and
+  // achievements so each entry is its own item instead of one free-text
+  // blob the user has to format manually.
+  function listInput(id, label, items, setItems, opts = {}) {
+    const move = (i, dir) => {
+      const j = i + dir;
+      if (j < 0 || j >= items.length) return;
+      const copy = [...items];
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+      setItems(copy);
+    };
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <label style={labelStyle}>{label}</label>
+        {items.map((val, i) => {
+          const itemId = `${id}-${i}`;
+          return (
+            <div key={i} style={{ marginBottom: 8 }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  value={val}
+                  onChange={(e) => {
+                    const copy = [...items];
+                    copy[i] = guardLangInput(itemId, e.target.value);
+                    setItems(copy);
+                  }}
+                  placeholder={opts.ph}
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+                <button type="button" onClick={() => move(i, -1)} disabled={i === 0} style={{ ...btnIcon, opacity: i === 0 ? 0.3 : 1 }} aria-label="up"><ChevronUp size={15} color={THEME.text} /></button>
+                <button type="button" onClick={() => move(i, 1)} disabled={i === items.length - 1} style={{ ...btnIcon, opacity: i === items.length - 1 ? 0.3 : 1 }} aria-label="down"><ChevronDown size={15} color={THEME.text} /></button>
+                <button type="button" onClick={() => setItems(items.filter((_, x) => x !== i))} style={btnIcon} aria-label="remove"><Trash2 size={15} color="#b3261e" /></button>
+              </div>
+              {blockedField === itemId && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+            </div>
+          );
+        })}
+        <button type="button" onClick={() => setItems([...items, ""])} style={btnAdd}><Plus size={16} /> {opts.addLabel}</button>
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
       </div>
     );
@@ -282,28 +427,29 @@ export default function AtsCvBuilder({ accessCode }) {
     linkedin: "",
     displayPhone: "",
     summary: "",
-    achievements: "",
     certs: "",
   });
+  // Whether a phone number different from the main contact number should
+  // be shown on the CV — off by default, so there's only one visible phone
+  // field unless the user explicitly asks for a separate one.
+  const [useAltCvPhone, setUseAltCvPhone] = useState(saved?.useAltCvPhone ?? false);
 
   const [experiences, setExperiences] = useState(saved?.experiences ?? [
-    { title: "", employer: "", fromMonth: "", fromYear: "", toMonth: "", toYear: "", current: false, bullets: "" },
+    { title: "", employer: "", fromMonth: "", fromYear: "", toMonth: "", toYear: "", current: false, bullets: [] },
   ]);
   const [education, setEducation] = useState(saved?.education ?? [
-    { degreeChoice: "", degreeCustom: "", specialization: "", schoolChoice: "", schoolCustom: "", year: "", detail: "", gradProject: "" },
+    { degreeChoice: "", degreeCustom: "", specializationChoice: "", specializationCustom: "", schoolChoice: "", schoolCustom: "", year: "", detail: "", gradProject: "" },
   ]);
   const [techSkillTags, setTechSkillTags] = useState(saved?.techSkillTags ?? []);
   const [softSkillTags, setSoftSkillTags] = useState(saved?.softSkillTags ?? []);
-  const [languageEntries, setLanguageEntries] = useState(saved?.languageEntries ?? [{ name: "", level: "" }]);
+  const [languageEntries, setLanguageEntries] = useState(saved?.languageEntries ?? [{ langChoice: "", langCustom: "", level: "" }]);
   const [tagDrafts, setTagDrafts] = useState({});
 
-  // ── Optional extra sections — each starts hidden ("not added") so the
-  // form stays clean; the user explicitly opts in per section. ──
+  // ── Optional sections — plain repeatable lists like Experience, empty
+  // by default so nothing shows until the user adds an entry. ──
   const [projects, setProjects] = useState(saved?.projects ?? []);
   const [courses, setCourses] = useState(saved?.courses ?? []);
-  const [showProjects, setShowProjects] = useState(saved?.showProjects ?? false);
-  const [showAchievements, setShowAchievements] = useState(saved?.showAchievements ?? false);
-  const [showCourses, setShowCourses] = useState(saved?.showCourses ?? false);
+  const [achievements, setAchievements] = useState(saved?.achievements ?? []);
 
   // Persists the current step and all form data on every change, keyed to
   // this access code, so refreshing the page — on ANY step, including the
@@ -314,16 +460,16 @@ export default function AtsCvBuilder({ accessCode }) {
     try {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed,
-        form, experiences, education, techSkillTags, softSkillTags, languageEntries,
-        projects, courses, showProjects, showAchievements, showCourses,
+        form, useAltCvPhone, experiences, education, techSkillTags, softSkillTags, languageEntries,
+        projects, courses, achievements,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, form, experiences, education, techSkillTags, softSkillTags, languageEntries, projects, courses, showProjects, showAchievements, showCourses]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, experiences, education, techSkillTags, softSkillTags, languageEntries, projects, courses, achievements]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   // ── Experience helpers ──
-  const addExp = () => setExperiences([...experiences, { title: "", employer: "", fromMonth: "", fromYear: "", toMonth: "", toYear: "", current: false, bullets: "" }]);
+  const addExp = () => setExperiences([...experiences, { title: "", employer: "", fromMonth: "", fromYear: "", toMonth: "", toYear: "", current: false, bullets: [] }]);
   const rmExp = (i) => setExperiences(experiences.filter((_, x) => x !== i));
   const setExp = (i, k) => (e) => {
     const copy = [...experiences];
@@ -332,7 +478,7 @@ export default function AtsCvBuilder({ accessCode }) {
   };
 
   // ── Education helpers ──
-  const addEdu = () => setEducation([...education, { degreeChoice: "", degreeCustom: "", specialization: "", schoolChoice: "", schoolCustom: "", year: "", detail: "", gradProject: "" }]);
+  const addEdu = () => setEducation([...education, { degreeChoice: "", degreeCustom: "", specializationChoice: "", specializationCustom: "", schoolChoice: "", schoolCustom: "", year: "", detail: "", gradProject: "" }]);
   const rmEdu = (i) => setEducation(education.filter((_, x) => x !== i));
   const setEdu = (i, k) => (e) => {
     const copy = [...education];
@@ -350,7 +496,7 @@ export default function AtsCvBuilder({ accessCode }) {
   };
 
   // ── Training courses helpers (optional section) ──
-  const addCourse = () => setCourses([...courses, { name: "", hours: "", provider: "" }]);
+  const addCourse = () => setCourses([...courses, { name: "", hours: "", provider: "", date: "" }]);
   const rmCourse = (i) => setCourses(courses.filter((_, x) => x !== i));
   const setCourse = (i, k) => (e) => {
     const copy = [...courses];
@@ -359,7 +505,7 @@ export default function AtsCvBuilder({ accessCode }) {
   };
 
   // ── Language helpers ──
-  const addLang = () => setLanguageEntries([...languageEntries, { name: "", level: "" }]);
+  const addLang = () => setLanguageEntries([...languageEntries, { langChoice: "", langCustom: "", level: "" }]);
   const rmLang = (i) => setLanguageEntries(languageEntries.filter((_, x) => x !== i));
   const setLang = (i, k) => (e) => {
     const copy = [...languageEntries];
@@ -368,7 +514,9 @@ export default function AtsCvBuilder({ accessCode }) {
   };
 
   const canProceed = () => {
-    if (step === 0) return form.name && form.phone && form.targetRole;
+    if (step === 0) return !!(form.name && form.phone && form.targetRole);
+    if (step === 1) return !experiences.some(dateRangeInvalid);
+    if (step === 2) return education.every((x) => x.schoolChoice !== OTHER || x.schoolCustom.trim());
     return true;
   };
 
@@ -379,63 +527,75 @@ export default function AtsCvBuilder({ accessCode }) {
   const cityOptions = cvLang === "en" ? EN_CITIES : AR_CITIES;
   const degreeOptions = cvLang === "en" ? EN_DEGREES : AR_DEGREES;
   const universityOptions = cvLang === "en" ? EN_UNIVERSITIES : AR_UNIVERSITIES;
+  const majorOptions = cvLang === "en" ? EN_MAJORS : AR_MAJORS;
+  const languageOptions = cvLang === "en" ? EN_LANGUAGE_OPTIONS : AR_LANGUAGE_OPTIONS;
   const levelOptions = cvLang === "en" ? EN_LEVELS : AR_LEVELS;
   const monthOptions = cvLang === "en" ? EN_MONTHS : AR_MONTHS;
   const gradYearOptions = yearRange(1970, CURRENT_YEAR + 6);
   const expYearOptions = yearRange(1970, CURRENT_YEAR);
+  const techSkillSuggestions = cvLang === "en" ? EN_TECH_SKILLS : AR_TECH_SKILLS;
+  const softSkillSuggestions = cvLang === "en" ? EN_SOFT_SKILLS : AR_SOFT_SKILLS;
 
   const L = cvLang === "en" ? {
     city: "City", experienceHeading: "Work Experience & Training", expCard: "Experience",
     jobTitle: "Job Title", employer: "Employer", from: "From", to: "To", month: "Month", year: "Year",
     currentJob: "I currently work here", bulletsLabel: "Responsibilities & Achievements",
-    bulletsHint: "One line per point. Start with a strong verb and add numbers where possible.",
-    bulletsPh: "One line = one point:\nPrepared journal entries and reviewed accounts\nFiled tax reports on time",
+    bulletsHint: "Add each task or achievement as its own point. Start with a strong verb and add numbers where possible.",
+    bulletsPh: "e.g. Prepared journal entries and reviewed accounts", addBulletPoint: "Add point",
+    dateOrderError: "End date must be after the start date.",
     addExp: "Add another experience",
     eduHeading: "Educational Qualification", eduCard: "Qualification", degree: "Degree",
-    specialization: "Specialization", specializationPh: "Accounting", university: "University",
+    specialization: "Specialization / Major", specializationSearchPh: "Search or select a major...",
+    university: "University",
     gradYear: "Graduation Year", gpa: "GPA (optional)", addEdu: "Add another qualification",
     gradProject: "Graduation Project (optional)", gradProjectPh: "e.g. Inventory Management System",
+    universityOtherRequired: "Please enter the university name.",
     skillsHeading: "Skills & Languages", techSkillsLabel: "Technical Skills",
-    techSkillsPh: "Type a skill and press Enter", techSkillsHint: "Press Enter or comma to add a skill.",
+    techSkillsPh: "Search or type a skill and press Enter", techSkillsHint: "Pick from the list or type your own, then press Enter.",
     softSkillsLabel: "Professional Skills", languagesLabel: "Languages", langCard: "Language",
-    langName: "Language", langNamePh: "English", proficiency: "Proficiency", addLang: "Add language",
+    langName: "Language", proficiency: "Proficiency", addLang: "Add language",
     extraHeading: "Additional Sections (Optional)",
     projectsTitle: "Projects", projectsHint: "Optional — showcase projects relevant to the target role.",
-    addProjectSection: "Add Projects Section", projectCard: "Project", projectName: "Project Name",
+    projectCard: "Project", projectName: "Project Name",
     projectDetails: "Description", addProject: "Add another project",
-    removeSection: "Remove Section",
-    achievementsTitle: "Achievements", achievementsHint: "One line per achievement.",
-    achievementsPh: "One line = one achievement:\nEmployee of the Year 2023\nCertificate of appreciation from the Finance Dept.",
-    addAchievementsSection: "Add Achievements Section",
-    coursesTitle: "Training Courses", addCourseSection: "Add Courses Section", courseCard: "Course",
+    achievementsHeading: "Achievements", achievementsHint: "Optional — one entry per achievement.",
+    achievementsPh: "e.g. Employee of the Year 2023", addAchievement: "Add achievement",
+    coursesTitle: "Training Courses", coursesHint: "Optional.", courseCard: "Course",
     courseName: "Course Name", courseHours: "Hours", courseProvider: "Provider / Institution",
+    courseDate: "Completion Date (optional)",
     addCourse: "Add another course",
+    altPhoneToggle: "Show a different phone number on the CV",
+    altPhoneLabel: "CV Phone Number",
   } : {
     city: "المدينة", experienceHeading: "الخبرات العملية والتدريب", expCard: "خبرة",
     jobTitle: "المسمى الوظيفي", employer: "جهة العمل", from: "من", to: "إلى", month: "الشهر", year: "السنة",
     currentJob: "لا زلت أعمل هنا", bulletsLabel: "المهام والإنجازات",
-    bulletsHint: "اكتب كل مهمة في سطر. ابدأ بفعل قوي وأضف رقماً كلما أمكن.",
-    bulletsPh: "كل سطر = نقطة مستقلة:\nإعداد القيود اليومية ومراجعة الحسابات\nإعداد التقارير الضريبية وتقديمها في مواعيدها",
+    bulletsHint: "أضف كل مهمة أو إنجاز كنقطة مستقلة. ابدأ بفعل قوي وأضف رقماً كلما أمكن.",
+    bulletsPh: "مثال: إعداد القيود اليومية ومراجعة الحسابات", addBulletPoint: "إضافة نقطة",
+    dateOrderError: "تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية.",
     addExp: "إضافة خبرة أخرى",
     eduHeading: "المؤهل العلمي", eduCard: "مؤهل", degree: "الدرجة",
-    specialization: "التخصص", specializationPh: "المحاسبة", university: "الجامعة",
+    specialization: "التخصص", specializationSearchPh: "ابحث أو اختر التخصص...",
+    university: "الجامعة",
     gradYear: "سنة التخرج", gpa: "المعدل (اختياري)", addEdu: "إضافة مؤهل آخر",
     gradProject: "مشروع التخرج (اختياري)", gradProjectPh: "مثال: نظام إدارة المخزون",
+    universityOtherRequired: "الرجاء إدخال اسم الجامعة.",
     skillsHeading: "المهارات واللغات", techSkillsLabel: "المهارات التقنية",
-    techSkillsPh: "اكتب مهارة واضغط Enter", techSkillsHint: "اضغط Enter أو الفاصلة لإضافة المهارة.",
+    techSkillsPh: "ابحث أو اكتب مهارة واضغط Enter", techSkillsHint: "اختر من القائمة أو اكتب مهارتك الخاصة ثم اضغط Enter.",
     softSkillsLabel: "المهارات المهنية", languagesLabel: "اللغات", langCard: "لغة",
-    langName: "اسم اللغة", langNamePh: "الإنجليزية", proficiency: "المستوى", addLang: "إضافة لغة",
-    extraHeading: "أقسام إضافية (اختياري)",
+    langName: "اللغة", proficiency: "المستوى", addLang: "إضافة لغة",
+    extraHeading: "أقسام إضافية (اختيارية)",
     projectsTitle: "المشاريع", projectsHint: "اختياري — أضف مشاريع ذات صلة بالوظيفة المستهدفة.",
-    addProjectSection: "إضافة قسم المشاريع", projectCard: "مشروع", projectName: "اسم المشروع",
+    projectCard: "مشروع", projectName: "اسم المشروع",
     projectDetails: "الوصف", addProject: "إضافة مشروع آخر",
-    removeSection: "إزالة القسم",
-    achievementsTitle: "الإنجازات", achievementsHint: "اكتب كل إنجاز في سطر.",
-    achievementsPh: "كل سطر = إنجاز مستقل:\nموظف العام 2023\nشهادة تقدير من الإدارة المالية",
-    addAchievementsSection: "إضافة قسم الإنجازات",
-    coursesTitle: "الدورات التدريبية", addCourseSection: "إضافة قسم الدورات", courseCard: "دورة",
+    achievementsHeading: "الإنجازات", achievementsHint: "اختياري — كل إنجاز كسطر مستقل.",
+    achievementsPh: "مثال: موظف العام 2023", addAchievement: "إضافة إنجاز",
+    coursesTitle: "الدورات التدريبية", coursesHint: "اختياري.", courseCard: "دورة",
     courseName: "اسم الدورة", courseHours: "عدد الساعات", courseProvider: "الجهة المانحة",
+    courseDate: "تاريخ الحصول عليها (اختياري)",
     addCourse: "إضافة دورة أخرى",
+    altPhoneToggle: "عرض رقم جوال مختلف في السيرة الذاتية",
+    altPhoneLabel: "رقم الجوال في السيرة",
   };
 
   // ── Validation (gentle, non-blocking) ──
@@ -446,22 +606,26 @@ export default function AtsCvBuilder({ accessCode }) {
 
   // ── Derived plain values fed to the (untouched) preview + PDF generator ──
   const cityValue = form.cityChoice === OTHER ? form.cityCustom : form.cityChoice;
-  // The number shown ON the CV falls back to the contact number when no
-  // separate display number was given.
-  const cvPhoneValue = form.displayPhone || form.phone;
+  // The number shown ON the CV is the main contact number, unless the user
+  // explicitly opted into a separate CV-only number.
+  const cvPhoneValue = useAltCvPhone && form.displayPhone ? form.displayPhone : form.phone;
 
   const displayExperiences = experiences.map((x) => ({
     title: x.title,
     employer: x.employer,
     period: formatPeriod(x, cvLang),
-    bullets: x.bullets,
+    // Joined back into the newline-per-point string the (untouched) PDF
+    // template already expects — the structured list is purely a form-UX
+    // improvement, the output format is unchanged.
+    bullets: (x.bullets || []).filter((b) => b.trim()).join("\n"),
   }));
 
   const displayEducation = education.map((x) => {
     const degreeLabel = x.degreeChoice === OTHER ? x.degreeCustom : x.degreeChoice;
+    const specialization = x.specializationChoice === OTHER ? x.specializationCustom : x.specializationChoice;
     const school = x.schoolChoice === OTHER ? x.schoolCustom : x.schoolChoice;
     return {
-      degree: [degreeLabel, x.specialization].filter(Boolean).join(" "),
+      degree: [degreeLabel, specialization].filter(Boolean).join(" "),
       school,
       year: x.year,
       detail: x.detail,
@@ -470,13 +634,17 @@ export default function AtsCvBuilder({ accessCode }) {
   });
 
   const displayProjects = projects.filter((p) => p.name || p.details);
-  const displayCourses = courses.filter((c) => c.name || c.hours || c.provider);
+  const displayCourses = courses.filter((c) => c.name || c.hours || c.provider || c.date);
+  const displayAchievementsStr = achievements.filter((a) => a.trim()).join("\n");
 
   const techSkillsStr = techSkillTags.join(sep);
   const softSkillsStr = softSkillTags.join(sep);
   const languagesStr = languageEntries
-    .filter((l) => l.name.trim())
-    .map((l) => `${l.name}${l.level ? ` — ${l.level}` : ""}`)
+    .filter((l) => (l.langChoice === OTHER ? l.langCustom.trim() : l.langChoice))
+    .map((l) => {
+      const name = l.langChoice === OTHER ? l.langCustom : l.langChoice;
+      return `${name}${l.level ? ` — ${l.level}` : ""}`;
+    })
     .join(sep);
 
   async function downloadPDF() {
@@ -502,12 +670,14 @@ export default function AtsCvBuilder({ accessCode }) {
             email: form.email,
             phone: cvPhoneValue,
             city: cityValue,
+            // Collected for future AI/matching features, but the PDF
+            // template no longer renders these into the CV output.
             targetRole: form.targetRole,
             objective: form.objective,
             yearsOfExperience: form.yearsOfExperience,
             linkedin: form.linkedin,
             summary: form.summary,
-            achievements: form.achievements,
+            achievements: displayAchievementsStr,
             certs: form.certs,
             languages: languagesStr,
           },
@@ -679,8 +849,6 @@ export default function AtsCvBuilder({ accessCode }) {
             {/* Header */}
             <div style={{ borderBottom: `2.5px solid ${C.ink}`, paddingBottom: 12, marginBottom: 16 }}>
               <div style={{ fontSize: 26, fontWeight: 800, color: C.ink, letterSpacing: 0.3 }}>{form.name || t.fallbackName}</div>
-              {form.targetRole && <div style={{ fontSize: 14.5, color: C.brass, fontWeight: 700, marginTop: 3 }}>{form.targetRole}</div>}
-              {form.objective && <div style={{ fontSize: 12, color: C.slate, fontStyle: "italic", marginTop: 3 }}>{t.objective}: {form.objective}</div>}
               <div style={{ fontSize: 12, color: C.slate, marginTop: 9, display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
                 {form.email && <span>✉ {form.email}</span>}
                 {cvPhoneValue && <span>☎ {cvPhoneValue}</span>}
@@ -744,10 +912,10 @@ export default function AtsCvBuilder({ accessCode }) {
               </Section>
             )}
 
-            {form.achievements && (
+            {displayAchievementsStr && (
               <Section title={t.achievements}>
                 <ul style={ulBody(cvDir)}>
-                  {splitLines(form.achievements).map((a, i) => <li key={i} style={liBody(cvDir)}>{a}</li>)}
+                  {splitLines(displayAchievementsStr).map((a, i) => <li key={i} style={liBody(cvDir)}>{a}</li>)}
                 </ul>
               </Section>
             )}
@@ -771,16 +939,19 @@ export default function AtsCvBuilder({ accessCode }) {
 
             {displayCourses.length > 0 && (
               <Section title={t.courses}>
-                {displayCourses.map((x, i) => (
-                  <div key={i} style={{ marginBottom: 8 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <span style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>
-                        {x.name}{x.provider && <span style={{ color: C.slate, fontWeight: 500 }}> — {x.provider}</span>}
-                      </span>
-                      {x.hours && <span style={{ fontSize: 11.5, color: C.slate, fontStyle: "italic" }}>{x.hours} {t.hoursUnit}</span>}
+                {displayCourses.map((x, i) => {
+                  const meta = [x.hours ? `${x.hours} ${t.hoursUnit}` : "", x.date || ""].filter(Boolean).join(" · ");
+                  return (
+                    <div key={i} style={{ marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                        <span style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>
+                          {x.name}{x.provider && <span style={{ color: C.slate, fontWeight: 500 }}> — {x.provider}</span>}
+                        </span>
+                        {meta && <span style={{ fontSize: 11.5, color: C.slate, fontStyle: "italic" }}>{meta}</span>}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </Section>
             )}
 
@@ -857,12 +1028,23 @@ export default function AtsCvBuilder({ accessCode }) {
                   (v) => setForm({ ...form, cityCustom: v }),
                   cityOptions
                 )}
-                {field("displayPhone", "رقم جوال آخر يظهر في السيرة (اختياري)", form.displayPhone, set("displayPhone"), { ph: "+9665xxxxxxxx", hint: "اتركه فارغاً لعرض رقم الجوال أعلاه في السيرة." })}
                 {field("linkedin", "رابط LinkedIn (اختياري)", form.linkedin, set("linkedin"), { ph: "https://linkedin.com/in/name" })}
                 {field("yearsOfExperience", "عدد سنوات الخبرة (اختياري)", form.yearsOfExperience, set("yearsOfExperience"), { ph: "5", numeric: true })}
               </div>
-              {field("targetRole", "الوظيفة المستهدفة", form.targetRole, set("targetRole"), { req: true, ph: "محاسب / محلل مالي" })}
-              {field("objective", "الوظائف المستهدفة (اختياري)", form.objective, set("objective"), { ph: "محاسب أول، محلل مالي، مراقب مالي", hint: "إن كان لديك أكثر من مسار وظيفي مستهدف." })}
+
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: THEME.text, marginBottom: 14, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={useAltCvPhone}
+                  onChange={(e) => setUseAltCvPhone(e.target.checked)}
+                  style={{ width: 16, height: 16, accentColor: THEME.primary }}
+                />
+                {L.altPhoneToggle}
+              </label>
+              {useAltCvPhone && field("displayPhone", L.altPhoneLabel, form.displayPhone, set("displayPhone"), { ph: "+9665xxxxxxxx", hint: "يظهر في السيرة الذاتية بدلاً من رقم الجوال أعلاه." })}
+
+              {field("targetRole", "الوظيفة المستهدفة", form.targetRole, set("targetRole"), { req: true, ph: "محاسب / محلل مالي", hint: "لتخصيص سيرتك فقط — لن تظهر هذه المعلومة في ملف الـ PDF." })}
+              {field("objective", "وظائف مستهدفة إضافية (اختياري)", form.objective, set("objective"), { ph: "محاسب أول، محلل مالي، مراقب مالي", hint: "اختياري لأهداف وظيفية إضافية — لن تظهر أيضاً في ملف الـ PDF." })}
               {fieldArea("summary", "الملخص المهني", form.summary, set("summary"), { rows: 4, ph: "اكتب 2-3 أسطر عن خبرتك ونقاط قوتك موجّهة للوظيفة المستهدفة.", hint: "اختياري — لكنه أول ما يقرأه صاحب العمل." })}
             </>
           )}
@@ -899,7 +1081,7 @@ export default function AtsCvBuilder({ accessCode }) {
                   {!x.current && (
                     <>
                       <label style={labelStyle}>{L.to}</label>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: dateRangeInvalid(x) ? 6 : 14 }}>
                         <select value={x.toMonth} onChange={setExp(i, "toMonth")} style={inputStyle}>
                           <option value="">{L.month}</option>
                           {monthOptions.map((m, idx) => <option key={idx + 1} value={idx + 1}>{m}</option>)}
@@ -909,6 +1091,7 @@ export default function AtsCvBuilder({ accessCode }) {
                           {expYearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
                         </select>
                       </div>
+                      {dateRangeInvalid(x) && <div style={{ ...warnStyle, marginBottom: 14 }}>{L.dateOrderError}</div>}
                     </>
                   )}
 
@@ -922,7 +1105,7 @@ export default function AtsCvBuilder({ accessCode }) {
                     {L.currentJob}
                   </label>
 
-                  {fieldArea(`exp-${i}-bullets`, L.bulletsLabel, x.bullets, setExp(i, "bullets"), { rows: 4, ph: L.bulletsPh, hint: L.bulletsHint })}
+                  {listInput(`exp-${i}-bullets`, L.bulletsLabel, x.bullets, (items) => setExp(i, "bullets")({ target: { value: items } }), { ph: L.bulletsPh, addLabel: L.addBulletPoint, hint: L.bulletsHint })}
                 </div>
               ))}
               <button onClick={addExp} style={btnAdd}><Plus size={16} /> {L.addExp}</button>
@@ -948,14 +1131,19 @@ export default function AtsCvBuilder({ accessCode }) {
                       (v) => setEdu(i, "degreeCustom")({ target: { value: v } }),
                       degreeOptions
                     )}
-                    {field(`edu-${i}-specialization`, L.specialization, x.specialization, setEdu(i, "specialization"), { ph: L.specializationPh })}
+                    {searchableSelect(
+                      `edu-${i}-specialization`, L.specialization, x.specializationChoice, x.specializationCustom,
+                      (v) => setEdu(i, "specializationChoice")({ target: { value: v } }),
+                      (v) => setEdu(i, "specializationCustom")({ target: { value: v } }),
+                      majorOptions, { ph: L.specializationSearchPh }
+                    )}
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                     {selectWithOther(
                       `edu-${i}-school`, L.university, x.schoolChoice, x.schoolCustom,
                       (v) => setEdu(i, "schoolChoice")({ target: { value: v } }),
                       (v) => setEdu(i, "schoolCustom")({ target: { value: v } }),
-                      universityOptions
+                      universityOptions, { otherRequired: true, otherRequiredMsg: L.universityOtherRequired }
                     )}
                     {selectField(`edu-${i}-year`, L.gradYear, x.year, setEdu(i, "year"), gradYearOptions)}
                   </div>
@@ -971,8 +1159,8 @@ export default function AtsCvBuilder({ accessCode }) {
           {step === 3 && (
             <>
               <SectionTitle>{L.skillsHeading}</SectionTitle>
-              {tagsInput("techSkills", L.techSkillsLabel, techSkillTags, setTechSkillTags, { ph: L.techSkillsPh, hint: L.techSkillsHint })}
-              {tagsInput("softSkills", L.softSkillsLabel, softSkillTags, setSoftSkillTags, { ph: L.techSkillsPh })}
+              {tagsInput("techSkills", L.techSkillsLabel, techSkillTags, setTechSkillTags, { ph: L.techSkillsPh, hint: L.techSkillsHint, suggestions: techSkillSuggestions })}
+              {tagsInput("softSkills", L.softSkillsLabel, softSkillTags, setSoftSkillTags, { ph: L.techSkillsPh, suggestions: softSkillSuggestions })}
 
               <label style={labelStyle}>{L.languagesLabel}</label>
               {languageEntries.map((l, i) => (
@@ -984,7 +1172,12 @@ export default function AtsCvBuilder({ accessCode }) {
                     )}
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    {field(`lang-${i}-name`, L.langName, l.name, setLang(i, "name"), { ph: L.langNamePh })}
+                    {selectWithOther(
+                      `lang-${i}-name`, L.langName, l.langChoice, l.langCustom,
+                      (v) => setLang(i, "langChoice")({ target: { value: v } }),
+                      (v) => setLang(i, "langCustom")({ target: { value: v } }),
+                      languageOptions
+                    )}
                     {selectField(`lang-${i}-level`, L.proficiency, l.level, setLang(i, "level"), levelOptions)}
                   </div>
                 </div>
@@ -1000,94 +1193,47 @@ export default function AtsCvBuilder({ accessCode }) {
 
               {/* Projects */}
               <div style={{ marginBottom: 24 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: showProjects ? 12 : 0 }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: THEME.primary }}>{L.projectsTitle}</div>
-                    {!showProjects && <div style={hintStyle}>{L.projectsHint}</div>}
+                <div style={{ fontSize: 14, fontWeight: 700, color: THEME.primary, marginBottom: 4 }}>{L.projectsTitle}</div>
+                <div style={hintStyle}>{L.projectsHint}</div>
+                {projects.map((x, i) => (
+                  <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginTop: 12, marginBottom: 14, background: THEME.card }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>{L.projectCard} #{i + 1}</span>
+                      <button onClick={() => rmProject(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
+                    </div>
+                    {field(`proj-${i}-name`, L.projectName, x.name, setProject(i, "name"), { ph: cvLang === "en" ? "Inventory Management System" : "نظام إدارة المخزون" })}
+                    {fieldArea(`proj-${i}-details`, L.projectDetails, x.details, setProject(i, "details"), { rows: 3 })}
                   </div>
-                  {!showProjects ? (
-                    <button onClick={() => { setShowProjects(true); if (!projects.length) addProject(); }} style={btnAddSection}>
-                      <Plus size={15} /> {L.addProjectSection}
-                    </button>
-                  ) : (
-                    <button onClick={() => { setProjects([]); setShowProjects(false); }} style={btnRemoveSection}>
-                      <Trash2 size={14} /> {L.removeSection}
-                    </button>
-                  )}
-                </div>
-                {showProjects && (
-                  <>
-                    {projects.map((x, i) => (
-                      <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginBottom: 14, background: THEME.card }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>{L.projectCard} #{i + 1}</span>
-                          {projects.length > 1 && (
-                            <button onClick={() => rmProject(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
-                          )}
-                        </div>
-                        {field(`proj-${i}-name`, L.projectName, x.name, setProject(i, "name"), { ph: cvLang === "en" ? "Inventory Management System" : "نظام إدارة المخزون" })}
-                        {fieldArea(`proj-${i}-details`, L.projectDetails, x.details, setProject(i, "details"), { rows: 3 })}
-                      </div>
-                    ))}
-                    <button onClick={addProject} style={btnAdd}><Plus size={16} /> {L.addProject}</button>
-                  </>
-                )}
+                ))}
+                <button onClick={addProject} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addProject}</button>
               </div>
 
               {/* Achievements */}
               <div style={{ marginBottom: 24 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: showAchievements ? 12 : 0 }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: THEME.primary }}>{L.achievementsTitle}</div>
-                    {!showAchievements && <div style={hintStyle}>{L.achievementsHint}</div>}
-                  </div>
-                  {!showAchievements ? (
-                    <button onClick={() => setShowAchievements(true)} style={btnAddSection}>
-                      <Plus size={15} /> {L.addAchievementsSection}
-                    </button>
-                  ) : (
-                    <button onClick={() => { setForm((f) => ({ ...f, achievements: "" })); setShowAchievements(false); }} style={btnRemoveSection}>
-                      <Trash2 size={14} /> {L.removeSection}
-                    </button>
-                  )}
-                </div>
-                {showAchievements && fieldArea("achievements", "", form.achievements, set("achievements"), { rows: 4, ph: L.achievementsPh, hint: L.achievementsHint })}
+                {listInput("achievements", L.achievementsHeading, achievements, setAchievements, { ph: L.achievementsPh, addLabel: L.addAchievement, hint: L.achievementsHint })}
               </div>
 
               {/* Training Courses */}
               <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: showCourses ? 12 : 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: THEME.primary }}>{L.coursesTitle}</div>
-                  {!showCourses ? (
-                    <button onClick={() => { setShowCourses(true); if (!courses.length) addCourse(); }} style={btnAddSection}>
-                      <Plus size={15} /> {L.addCourseSection}
-                    </button>
-                  ) : (
-                    <button onClick={() => { setCourses([]); setShowCourses(false); }} style={btnRemoveSection}>
-                      <Trash2 size={14} /> {L.removeSection}
-                    </button>
-                  )}
-                </div>
-                {showCourses && (
-                  <>
-                    {courses.map((x, i) => (
-                      <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginTop: 12, marginBottom: 14, background: THEME.card }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>{L.courseCard} #{i + 1}</span>
-                          {courses.length > 1 && (
-                            <button onClick={() => rmCourse(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
-                          )}
-                        </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                          {field(`course-${i}-name`, L.courseName, x.name, setCourse(i, "name"), {})}
-                          {field(`course-${i}-hours`, L.courseHours, x.hours, setCourse(i, "hours"), { numeric: true })}
-                        </div>
-                        {field(`course-${i}-provider`, L.courseProvider, x.provider, setCourse(i, "provider"), {})}
-                      </div>
-                    ))}
-                    <button onClick={addCourse} style={btnAdd}><Plus size={16} /> {L.addCourse}</button>
-                  </>
-                )}
+                <div style={{ fontSize: 14, fontWeight: 700, color: THEME.primary, marginBottom: 4 }}>{L.coursesTitle}</div>
+                <div style={hintStyle}>{L.coursesHint}</div>
+                {courses.map((x, i) => (
+                  <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginTop: 12, marginBottom: 14, background: THEME.card }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>{L.courseCard} #{i + 1}</span>
+                      <button onClick={() => rmCourse(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                      {field(`course-${i}-name`, L.courseName, x.name, setCourse(i, "name"), {})}
+                      {field(`course-${i}-hours`, L.courseHours, x.hours, setCourse(i, "hours"), { numeric: true })}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                      {field(`course-${i}-provider`, L.courseProvider, x.provider, setCourse(i, "provider"), {})}
+                      {selectField(`course-${i}-date`, L.courseDate, x.date, setCourse(i, "date"), gradYearOptions)}
+                    </div>
+                  </div>
+                ))}
+                <button onClick={addCourse} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addCourse}</button>
               </div>
             </>
           )}
@@ -1095,8 +1241,8 @@ export default function AtsCvBuilder({ accessCode }) {
           {/* STEP 5 - Certs */}
           {step === 5 && (
             <>
-              <SectionTitle>الشهادات المهنية والدورات</SectionTitle>
-              {fieldArea("certs", "الشهادات والدورات", form.certs, set("certs"), { rows: 5, ph: "كل شهادة في سطر:\nشهادة SOCPA\nدورة معايير IFRS\nشهادة CMA (قيد الدراسة)", hint: "اختياري — لكنه يقوّي السيرة كثيراً في مجال المحاسبة. اكتب كل شهادة في سطر." })}
+              <SectionTitle>الشهادات المهنية</SectionTitle>
+              {fieldArea("certs", "الشهادات", form.certs, set("certs"), { rows: 5, ph: "كل شهادة في سطر:\nشهادة SOCPA\nشهادة CMA (قيد الدراسة)\nعضوية الهيئة السعودية للمحاسبين القانونيين", hint: "اختياري — لكنه يقوّي السيرة كثيراً في مجال المحاسبة. اكتب كل شهادة في سطر." })}
             </>
           )}
 
@@ -1117,6 +1263,12 @@ export default function AtsCvBuilder({ accessCode }) {
           </div>
           {step === 0 && !canProceed() && (
             <div style={{ marginTop: 12, fontSize: 12, color: THEME.text, textAlign: "center" }}>* الاسم والجوال والوظيفة المستهدفة مطلوبة للمتابعة</div>
+          )}
+          {step === 1 && !canProceed() && (
+            <div style={{ marginTop: 12, fontSize: 12, color: "#b3261e", textAlign: "center" }}>{L.dateOrderError}</div>
+          )}
+          {step === 2 && !canProceed() && (
+            <div style={{ marginTop: 12, fontSize: 12, color: "#b3261e", textAlign: "center" }}>{L.universityOtherRequired}</div>
           )}
         </div>
 
@@ -1149,6 +1301,8 @@ const warnStyle = { fontSize: 11.5, color: "#b3261e", marginTop: 5, lineHeight: 
 const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #dde4ec", background: "#ffffff", fontSize: 13.5, color: "#3a4a5a", fontFamily: "inherit", boxSizing: "border-box" };
 const chipStyle = { display: "inline-flex", alignItems: "center", gap: 6, background: "#e8eef4", color: "#1a3a5c", borderRadius: 999, padding: "4px 10px", fontSize: 12.5, fontWeight: 600 };
 const chipRemoveStyle = { background: "transparent", border: "none", cursor: "pointer", color: "#1a3a5c", fontSize: 14, lineHeight: 1, padding: 0, fontWeight: 700 };
+const dropdownListStyle = { position: "absolute", top: "100%", insetInlineStart: 0, insetInlineEnd: 0, marginTop: 4, background: "#ffffff", border: "1px solid #dde4ec", borderRadius: 8, boxShadow: "0 4px 16px rgba(20,40,60,.12)", maxHeight: 220, overflowY: "auto", zIndex: 20 };
+const dropdownItemStyle = { padding: "9px 12px", fontSize: 13, color: "#3a4a5a", cursor: "pointer", borderBottom: "1px solid #f0f2f5" };
 
 const cvPage = { width: "210mm", minHeight: "297mm", background: "#ffffff", padding: "18mm 16mm", boxShadow: "0 2px 16px rgba(20,40,60,.12)", boxSizing: "border-box" };
 const pBody = { margin: 0, fontSize: 13, lineHeight: 1.85, color: "#333333", textAlign: "justify" };
@@ -1163,9 +1317,6 @@ const btnGhostLight = { display: "inline-flex", alignItems: "center", gap: 6, ba
 const btnBrass = { display: "inline-flex", alignItems: "center", gap: 7, background: "#000000", color: "#ffffff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 const btnAdd = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#1a3a5c", border: "1.5px dashed #2d5578", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%", justifyContent: "center" };
 const btnIcon = { background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex" };
-// Toggles an optional CV section (Projects / Achievements / Training Courses) on or off.
-const btnAddSection = { display: "inline-flex", alignItems: "center", gap: 5, background: "#e8eef4", color: "#1a3a5c", border: "1px solid #dde4ec", borderRadius: 8, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
-const btnRemoveSection = { display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", color: "#b3261e", border: "1px solid #f0d0d0", borderRadius: 8, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
 
 const printCSS = `
   .spin { animation: spin 1s linear infinite; }
