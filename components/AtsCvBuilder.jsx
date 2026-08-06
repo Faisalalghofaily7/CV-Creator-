@@ -105,6 +105,42 @@ function dateRangeInvalid(x) {
   return to < from;
 }
 
+// Ranks an experience by recency for sorting the generated CV: an ongoing
+// role ("current") always ranks most recent, then whichever end date is
+// latest, falling back to the start date for entries with no end date yet.
+function experienceSortKey(x) {
+  if (x.current) return Infinity;
+  if (x.toYear && x.toMonth) return Number(x.toYear) * 12 + Number(x.toMonth);
+  if (x.fromYear && x.fromMonth) return Number(x.fromYear) * 12 + Number(x.fromMonth);
+  return -Infinity;
+}
+
+function sortExperiencesDesc(list) {
+  return [...list].sort((a, b) => experienceSortKey(b) - experienceSortKey(a));
+}
+
+// Null when either range is incomplete (nothing to compare) — an ongoing
+// role's end is treated as "now" (Infinity) for overlap purposes.
+function experienceRange(x) {
+  if (!x.fromYear || !x.fromMonth) return null;
+  const start = Number(x.fromYear) * 12 + Number(x.fromMonth);
+  const end = x.current ? Infinity : (x.toYear && x.toMonth ? Number(x.toYear) * 12 + Number(x.toMonth) : null);
+  if (end == null) return null;
+  return { start, end };
+}
+
+// Gentle, non-blocking signal only — concurrent roles are a legitimate
+// real-world case, so overlapping dates should warn, never block proceeding.
+function anyExperiencesOverlap(list) {
+  const ranges = list.map(experienceRange).filter(Boolean);
+  for (let i = 0; i < ranges.length; i++) {
+    for (let j = i + 1; j < ranges.length; j++) {
+      if (ranges[i].start <= ranges[j].end && ranges[j].start <= ranges[i].end) return true;
+    }
+  }
+  return false;
+}
+
 // ── Design tokens ──────────────────────────────────────────────
 // "Official HR file" identity: formal black & white / grayscale.
 const C = {
@@ -450,7 +486,6 @@ export default function AtsCvBuilder({ accessCode }) {
 
   // ── Optional sections — plain repeatable lists like Experience, empty
   // by default so nothing shows until the user adds an entry. ──
-  const [projects, setProjects] = useState(saved?.projects ?? []);
   const [courses, setCourses] = useState(saved?.courses ?? []);
   const [achievements, setAchievements] = useState(saved?.achievements ?? []);
   const [certifications, setCertifications] = useState(saved?.certifications ?? []);
@@ -465,10 +500,10 @@ export default function AtsCvBuilder({ accessCode }) {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed,
         form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries,
-        projects, courses, achievements, certifications,
+        courses, achievements, certifications,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, projects, courses, achievements, certifications]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -488,15 +523,6 @@ export default function AtsCvBuilder({ accessCode }) {
     const copy = [...education];
     copy[i][k] = e.target.value;
     setEducation(copy);
-  };
-
-  // ── Projects helpers (optional section) ──
-  const addProject = () => setProjects([...projects, { name: "", details: "" }]);
-  const rmProject = (i) => setProjects(projects.filter((_, x) => x !== i));
-  const setProject = (i, k) => (e) => {
-    const copy = [...projects];
-    copy[i][k] = e.target.value;
-    setProjects(copy);
   };
 
   // ── Training courses helpers (optional section) ──
@@ -562,6 +588,7 @@ export default function AtsCvBuilder({ accessCode }) {
     bulletsHint: "Add each task or achievement as its own point. Start with a strong verb and add numbers where possible.",
     bulletsPh: "e.g. Prepared journal entries and reviewed accounts", addBulletPoint: "Add point",
     dateOrderError: "End date must be after the start date.",
+    overlapWarning: "Note: some experience periods overlap — please double-check the dates.",
     addExp: "Add another experience",
     eduHeading: "Educational Qualification", eduCard: "Qualification", degree: "Degree",
     specialization: "Specialization / Major", specializationSearchPh: "Search or select a major...",
@@ -574,9 +601,6 @@ export default function AtsCvBuilder({ accessCode }) {
     softSkillsLabel: "Professional Skills", languagesLabel: "Languages", langCard: "Language",
     langName: "Language", proficiency: "Proficiency", addLang: "Add language",
     extraHeading: "Additional Sections (Optional)",
-    projectsTitle: "Projects", projectsHint: "Optional — showcase projects relevant to the target role.",
-    projectCard: "Project", projectName: "Project Name",
-    projectDetails: "Description", addProject: "Add another project",
     achievementsHeading: "Achievements", achievementsHint: "Optional — one entry per achievement.",
     achievementsPh: "e.g. Employee of the Year 2023", addAchievement: "Add achievement",
     coursesTitle: "Training Courses", coursesHint: "Optional.", courseCard: "Course",
@@ -601,6 +625,7 @@ export default function AtsCvBuilder({ accessCode }) {
     bulletsHint: "أضف كل مهمة أو إنجاز كنقطة مستقلة. ابدأ بفعل قوي وأضف رقماً كلما أمكن.",
     bulletsPh: "مثال: إعداد القيود اليومية ومراجعة الحسابات", addBulletPoint: "إضافة نقطة",
     dateOrderError: "تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية.",
+    overlapWarning: "تنبيه: فترات الخبرات متداخلة، تأكد من صحتها.",
     addExp: "إضافة خبرة أخرى",
     eduHeading: "المؤهل العلمي", eduCard: "مؤهل", degree: "الدرجة",
     specialization: "التخصص", specializationSearchPh: "ابحث أو اختر التخصص...",
@@ -613,9 +638,6 @@ export default function AtsCvBuilder({ accessCode }) {
     softSkillsLabel: "المهارات المهنية", languagesLabel: "اللغات", langCard: "لغة",
     langName: "اللغة", proficiency: "المستوى", addLang: "إضافة لغة",
     extraHeading: "أقسام إضافية (اختيارية)",
-    projectsTitle: "المشاريع", projectsHint: "اختياري — أضف مشاريع ذات صلة بالوظيفة المستهدفة.",
-    projectCard: "مشروع", projectName: "اسم المشروع",
-    projectDetails: "الوصف", addProject: "إضافة مشروع آخر",
     achievementsHeading: "الإنجازات", achievementsHint: "اختياري — كل إنجاز كسطر مستقل.",
     achievementsPh: "مثال: موظف العام 2023", addAchievement: "إضافة إنجاز",
     coursesTitle: "الدورات التدريبية", coursesHint: "اختياري.", courseCard: "دورة",
@@ -646,8 +668,15 @@ export default function AtsCvBuilder({ accessCode }) {
   // The number shown ON the CV is the main contact number, unless the user
   // explicitly opted into a separate CV-only number.
   const cvPhoneValue = useAltCvPhone && form.displayPhone ? form.displayPhone : form.phone;
+  // Single clean "email | phone | city | LinkedIn | years experience" line —
+  // no dedicated headline field is collected, so the professional title
+  // under the name is simply the most recent role's job title, if any.
+  const contactLineParts = [form.email, cvPhoneValue, cityValue, form.linkedin, form.yearsOfExperience && `${form.yearsOfExperience} ${t.yearsOfExperience}`].filter(Boolean);
 
-  const displayExperiences = experiences.map((x) => ({
+  // Sorted most-recent-first for the generated CV, regardless of the order
+  // entries were added in the form — an ongoing role always ranks above
+  // any finished one.
+  const displayExperiences = sortExperiencesDesc(experiences).map((x) => ({
     title: x.title,
     employer: x.employer,
     period: formatPeriod(x, cvLang),
@@ -656,6 +685,7 @@ export default function AtsCvBuilder({ accessCode }) {
     // improvement, the output format is unchanged.
     bullets: (x.bullets || []).filter((b) => b.trim()).join("\n"),
   }));
+  const cvHeadline = displayExperiences.find((x) => x.title || x.employer)?.title || "";
 
   const displayEducation = education.map((x) => {
     const degreeLabel = x.degreeChoice === OTHER ? x.degreeCustom : x.degreeChoice;
@@ -670,7 +700,6 @@ export default function AtsCvBuilder({ accessCode }) {
     };
   });
 
-  const displayProjects = projects.filter((p) => p.name || p.details);
   const displayCourses = courses.filter((c) => c.name || c.hours || c.provider || c.date);
   const displayCertifications = certifications.filter((c) => c.name || c.issuingBody || c.date);
   const displayAchievementsStr = achievements.filter((a) => a.trim()).join("\n");
@@ -683,7 +712,7 @@ export default function AtsCvBuilder({ accessCode }) {
       const name = l.langChoice === OTHER ? l.langCustom : l.langChoice;
       return `${name}${l.level ? ` — ${l.level}` : ""}`;
     })
-    .join(sep);
+    .join(" | ");
 
   async function downloadPDF() {
     setDownloading(true);
@@ -719,7 +748,6 @@ export default function AtsCvBuilder({ accessCode }) {
           },
           experiences: displayExperiences,
           education: displayEducation,
-          projects: displayProjects,
           courses: displayCourses,
           certifications: displayCertifications,
           techSkills: techSkillsStr,
@@ -883,69 +911,18 @@ export default function AtsCvBuilder({ accessCode }) {
 
         <div style={{ display: "flex", justifyContent: "center", padding: "24px 12px 60px" }}>
           <div className="cv-page" style={cvPage}>
-            {/* Header */}
+            {/* Header: name + professional headline (the most recent role's title) */}
             <div style={{ borderBottom: `2.5px solid ${C.ink}`, paddingBottom: 12, marginBottom: 16 }}>
               <div style={{ fontSize: 26, fontWeight: 800, color: C.ink, letterSpacing: 0.3 }}>{form.name || t.fallbackName}</div>
-              <div style={{ fontSize: 12, color: C.slate, marginTop: 9, display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
-                {form.email && <span>✉ {form.email}</span>}
-                {cvPhoneValue && <span>☎ {cvPhoneValue}</span>}
-                {cityValue && <span>📍 {cityValue}</span>}
-                {form.linkedin && <span>🔗 {form.linkedin}</span>}
-                {form.yearsOfExperience && <span>🕘 {form.yearsOfExperience} {t.yearsOfExperience}</span>}
-              </div>
+              {cvHeadline && <div style={{ fontSize: 13.5, color: C.slate, marginTop: 3, fontWeight: 600 }}>{cvHeadline}</div>}
+              {contactLineParts.length > 0 && (
+                <div style={{ fontSize: 12, color: C.slate, marginTop: 9 }}>{contactLineParts.join(" | ")}</div>
+              )}
             </div>
 
             {form.summary && (
               <Section title={t.summary}>
                 <p style={pBody}>{form.summary}</p>
-              </Section>
-            )}
-
-            {displayExperiences.some((x) => x.title || x.employer) && (
-              <Section title={t.experience}>
-                {displayExperiences.filter((x) => x.title || x.employer).map((x, i) => (
-                  <div key={i} style={{ marginBottom: 12 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <span style={{ fontWeight: 700, color: C.ink, fontSize: 13.5 }}>
-                        {x.title}{x.employer && <span style={{ color: C.slate, fontWeight: 500 }}> — {x.employer}</span>}
-                      </span>
-                      {x.period && <span style={{ fontSize: 11.5, color: C.slate, fontStyle: "italic", whiteSpace: "nowrap" }}>{x.period}</span>}
-                    </div>
-                    {x.bullets && (
-                      <ul style={ulBody(cvDir)}>
-                        {splitLines(x.bullets).map((b, j) => <li key={j} style={liBody(cvDir)}>{b}</li>)}
-                      </ul>
-                    )}
-                  </div>
-                ))}
-              </Section>
-            )}
-
-            {displayEducation.some((x) => x.degree || x.school) && (
-              <Section title={t.education}>
-                {displayEducation.filter((x) => x.degree || x.school).map((x, i) => (
-                  <div key={i} style={{ marginBottom: 8 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <span style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>
-                        {x.degree}{x.school && <span style={{ color: C.slate, fontWeight: 500 }}> — {x.school}</span>}
-                      </span>
-                      {x.year && <span style={{ fontSize: 11.5, color: C.slate, fontStyle: "italic" }}>{x.year}</span>}
-                    </div>
-                    {x.detail && <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}>{x.detail}</div>}
-                    {x.gradProject && <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}><strong style={{ color: C.ink }}>{t.gradProject}:</strong> {x.gradProject}</div>}
-                  </div>
-                ))}
-              </Section>
-            )}
-
-            {displayProjects.length > 0 && (
-              <Section title={t.projects}>
-                {displayProjects.map((x, i) => (
-                  <div key={i} style={{ marginBottom: 10 }}>
-                    <div style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>{x.name}</div>
-                    {x.details && <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}>{x.details}</div>}
-                  </div>
-                ))}
               </Section>
             )}
 
@@ -962,36 +939,61 @@ export default function AtsCvBuilder({ accessCode }) {
                 {techSkillTags.length > 0 && (
                   <div style={{ marginBottom: 6 }}>
                     <span style={skillCat}>{t.techSkills} </span>
-                    <span style={{ fontSize: 12.5, color: C.slate }}>{techSkillTags.join(" · ")}</span>
+                    <span style={{ fontSize: 12.5, color: C.slate }}>{techSkillTags.join(" | ")}</span>
                   </div>
                 )}
                 {softSkillTags.length > 0 && (
                   <div>
                     <span style={skillCat}>{t.softSkills} </span>
-                    <span style={{ fontSize: 12.5, color: C.slate }}>{softSkillTags.join(" · ")}</span>
+                    <span style={{ fontSize: 12.5, color: C.slate }}>{softSkillTags.join(" | ")}</span>
                   </div>
                 )}
               </Section>
             )}
 
+            {displayExperiences.some((x) => x.title || x.employer) && (
+              <Section title={t.experience}>
+                {displayExperiences.filter((x) => x.title || x.employer).map((x, i) => (
+                  <div key={i} style={{ marginBottom: 12 }}>
+                    <div style={{ fontWeight: 700, color: C.ink, fontSize: 13.5 }}>
+                      {[x.title, x.employer, x.period].filter(Boolean).join(" | ")}
+                    </div>
+                    {x.bullets && (
+                      <ul style={ulBody(cvDir)}>
+                        {splitLines(x.bullets).map((b, j) => <li key={j} style={liBody(cvDir)}>{b}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </Section>
+            )}
+
+            {displayEducation.some((x) => x.degree || x.school) && (
+              <Section title={t.education}>
+                {displayEducation.filter((x) => x.degree || x.school).map((x, i) => (
+                  <div key={i} style={{ marginBottom: 8 }}>
+                    <div style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>
+                      {[x.degree, x.school, x.year].filter(Boolean).join(" | ")}
+                    </div>
+                    {x.detail && <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}>{x.detail}</div>}
+                    {x.gradProject && <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}><strong style={{ color: C.ink }}>{t.gradProject}:</strong> {x.gradProject}</div>}
+                  </div>
+                ))}
+              </Section>
+            )}
+
             {displayCourses.length > 0 && (
               <Section title={t.courses}>
-                {displayCourses.map((x, i) => {
-                  const meta = [x.hours ? `${x.hours} ${t.hoursUnit}` : "", x.date || ""].filter(Boolean).join(" · ");
-                  return (
-                    <div key={i} style={{ marginBottom: 8 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <span style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>
-                          {x.name}{x.provider && <span style={{ color: C.slate, fontWeight: 500 }}> — {x.provider}</span>}
-                        </span>
-                        {meta && <span style={{ fontSize: 11.5, color: C.slate, fontStyle: "italic" }}>{meta}</span>}
-                      </div>
-                      {x.hasLicense && x.licenseNumber && (
-                        <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}><strong style={{ color: C.ink }}>{t.licenseNumber}:</strong> {x.licenseNumber}</div>
-                      )}
+                {displayCourses.map((x, i) => (
+                  <div key={i} style={{ marginBottom: 8 }}>
+                    <div style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>
+                      {[x.name, x.provider, x.hours && `${x.hours} ${t.hoursUnit}`, x.date].filter(Boolean).join(" | ")}
                     </div>
-                  );
-                })}
+                    {x.hasLicense && x.licenseNumber && (
+                      <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}><strong style={{ color: C.ink }}>{t.licenseNumber}:</strong> {x.licenseNumber}</div>
+                    )}
+                  </div>
+                ))}
               </Section>
             )}
 
@@ -999,11 +1001,8 @@ export default function AtsCvBuilder({ accessCode }) {
               <Section title={t.certs}>
                 {displayCertifications.map((x, i) => (
                   <div key={i} style={{ marginBottom: 8 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <span style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>
-                        {x.name}{x.issuingBody && <span style={{ color: C.slate, fontWeight: 500 }}> — {x.issuingBody}</span>}
-                      </span>
-                      {x.date && <span style={{ fontSize: 11.5, color: C.slate, fontStyle: "italic" }}>{x.date}</span>}
+                    <div style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>
+                      {[x.name, x.issuingBody, x.date].filter(Boolean).join(" | ")}
                     </div>
                   </div>
                 ))}
@@ -1155,6 +1154,7 @@ export default function AtsCvBuilder({ accessCode }) {
                 </div>
               ))}
               <button onClick={addExp} style={btnAdd}><Plus size={16} /> {L.addExp}</button>
+              {anyExperiencesOverlap(experiences) && <div style={{ ...warnStyle, marginTop: 12 }}>{L.overlapWarning}</div>}
             </>
           )}
 
@@ -1236,23 +1236,6 @@ export default function AtsCvBuilder({ accessCode }) {
           {step === 4 && (
             <>
               <SectionTitle>{L.extraHeading}</SectionTitle>
-
-              {/* Projects */}
-              <div style={{ marginBottom: 24 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: THEME.primary, marginBottom: 4 }}>{L.projectsTitle}</div>
-                <div style={hintStyle}>{L.projectsHint}</div>
-                {projects.map((x, i) => (
-                  <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginTop: 12, marginBottom: 14, background: THEME.card }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>{L.projectCard} #{i + 1}</span>
-                      <button onClick={() => rmProject(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
-                    </div>
-                    {field(`proj-${i}-name`, L.projectName, x.name, setProject(i, "name"), { ph: cvLang === "en" ? "Inventory Management System" : "نظام إدارة المخزون" })}
-                    {fieldArea(`proj-${i}-details`, L.projectDetails, x.details, setProject(i, "details"), { rows: 3 })}
-                  </div>
-                ))}
-                <button onClick={addProject} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addProject}</button>
-              </div>
 
               {/* Achievements */}
               <div style={{ marginBottom: 24 }}>
