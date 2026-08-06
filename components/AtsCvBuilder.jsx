@@ -70,6 +70,9 @@ const EN_TECH_SKILLS = ["Excel", "Word", "PowerPoint", "SAP", "Oracle ERP", "Qui
 const AR_SOFT_SKILLS = ["العمل الجماعي", "القيادة", "التواصل الفعّال", "حل المشكلات", "إدارة الوقت", "التفكير النقدي", "العمل تحت الضغط", "خدمة العملاء", "التفاوض", "الإبداع", "التخطيط الاستراتيجي", "إدارة الفريق"];
 const EN_SOFT_SKILLS = ["Teamwork", "Leadership", "Effective Communication", "Problem Solving", "Time Management", "Critical Thinking", "Working Under Pressure", "Customer Service", "Negotiation", "Creativity", "Strategic Planning", "Team Management"];
 
+const AR_ROLES = ["محاسب", "محلل مالي", "مراقب مالي", "مدير مالي", "مدقق حسابات", "محلل بيانات", "مطور برمجيات", "مهندس", "أخصائي موارد بشرية", "مدير مشروع", "أخصائي تسويق", "مندوب مبيعات", "مدير عمليات", "أخصائي مشتريات", "مدير تنفيذي", "مستشار", "محامٍ", "مصمم جرافيك", "أخصائي دعم فني", "مدير مبيعات", "أخصائي علاقات عامة", "مدير مكتب", "سكرتير تنفيذي", "مهندس شبكات", "محلل أنظمة", "أخصائي أمن سيبراني", "مدرب", "معلم"];
+const EN_ROLES = ["Accountant", "Financial Analyst", "Financial Controller", "Finance Manager", "Auditor", "Data Analyst", "Software Developer", "Engineer", "HR Specialist", "Project Manager", "Marketing Specialist", "Sales Representative", "Operations Manager", "Procurement Specialist", "Executive Manager", "Consultant", "Lawyer", "Graphic Designer", "IT Support Specialist", "Sales Manager", "Public Relations Specialist", "Office Manager", "Executive Secretary", "Network Engineer", "Systems Analyst", "Cybersecurity Specialist", "Trainer", "Teacher"];
+
 function yearRange(from, to) {
   const years = [];
   for (let y = to; y >= from; y--) years.push(String(y));
@@ -136,7 +139,7 @@ const STEPS = [
   { key: "education", label: "التعليم", icon: GraduationCap },
   { key: "skills", label: "المهارات", icon: Wrench },
   { key: "extra", label: "أقسام إضافية", icon: Layers },
-  { key: "certs", label: "الشهادات", icon: Award },
+  { key: "certs", label: "الشهادات والعضويات", icon: Award },
 ];
 
 export default function AtsCvBuilder({ accessCode }) {
@@ -421,18 +424,18 @@ export default function AtsCvBuilder({ accessCode }) {
     phone: "",
     cityChoice: "",
     cityCustom: "",
-    targetRole: "",
-    objective: "",
     yearsOfExperience: "",
     linkedin: "",
     displayPhone: "",
     summary: "",
-    certs: "",
   });
   // Whether a phone number different from the main contact number should
   // be shown on the CV — off by default, so there's only one visible phone
   // field unless the user explicitly asks for a separate one.
   const [useAltCvPhone, setUseAltCvPhone] = useState(saved?.useAltCvPhone ?? false);
+  // Target role(s) — collected/stored for future matching features but,
+  // per product decision, never rendered into the generated CV/PDF.
+  const [targetRoles, setTargetRoles] = useState(saved?.targetRoles ?? []);
 
   const [experiences, setExperiences] = useState(saved?.experiences ?? [
     { title: "", employer: "", fromMonth: "", fromYear: "", toMonth: "", toYear: "", current: false, bullets: [] },
@@ -450,6 +453,7 @@ export default function AtsCvBuilder({ accessCode }) {
   const [projects, setProjects] = useState(saved?.projects ?? []);
   const [courses, setCourses] = useState(saved?.courses ?? []);
   const [achievements, setAchievements] = useState(saved?.achievements ?? []);
+  const [certifications, setCertifications] = useState(saved?.certifications ?? []);
 
   // Persists the current step and all form data on every change, keyed to
   // this access code, so refreshing the page — on ANY step, including the
@@ -460,11 +464,11 @@ export default function AtsCvBuilder({ accessCode }) {
     try {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed,
-        form, useAltCvPhone, experiences, education, techSkillTags, softSkillTags, languageEntries,
-        projects, courses, achievements,
+        form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries,
+        projects, courses, achievements, certifications,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, experiences, education, techSkillTags, softSkillTags, languageEntries, projects, courses, achievements]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, projects, courses, achievements, certifications]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -496,12 +500,22 @@ export default function AtsCvBuilder({ accessCode }) {
   };
 
   // ── Training courses helpers (optional section) ──
-  const addCourse = () => setCourses([...courses, { name: "", hours: "", provider: "", date: "" }]);
+  const addCourse = () => setCourses([...courses, { name: "", hours: "", provider: "", date: "", hasLicense: false, licenseNumber: "" }]);
   const rmCourse = (i) => setCourses(courses.filter((_, x) => x !== i));
   const setCourse = (i, k) => (e) => {
     const copy = [...courses];
     copy[i][k] = e.target.value;
     setCourses(copy);
+  };
+
+  // ── Certifications & Memberships helpers (optional section — standalone
+  // credentials without hours/provider, distinct from Training Courses) ──
+  const addCert = () => setCertifications([...certifications, { name: "", issuingBody: "", date: "" }]);
+  const rmCert = (i) => setCertifications(certifications.filter((_, x) => x !== i));
+  const setCert = (i, k) => (e) => {
+    const copy = [...certifications];
+    copy[i][k] = e.target.value;
+    setCertifications(copy);
   };
 
   // ── Language helpers ──
@@ -514,7 +528,7 @@ export default function AtsCvBuilder({ accessCode }) {
   };
 
   const canProceed = () => {
-    if (step === 0) return !!(form.name && form.phone && form.targetRole);
+    if (step === 0) return !!(form.name && form.phone && targetRoles.length > 0);
     if (step === 1) return !experiences.some(dateRangeInvalid);
     if (step === 2) return education.every((x) => x.schoolChoice !== OTHER || x.schoolCustom.trim());
     return true;
@@ -533,8 +547,13 @@ export default function AtsCvBuilder({ accessCode }) {
   const monthOptions = cvLang === "en" ? EN_MONTHS : AR_MONTHS;
   const gradYearOptions = yearRange(1970, CURRENT_YEAR + 6);
   const expYearOptions = yearRange(1970, CURRENT_YEAR);
+  // "Obtained" dates (courses, certifications) can never legitimately be in
+  // the future, unlike gradYearOptions which intentionally allows a few
+  // years ahead for expected graduation.
+  const pastYearOptions = yearRange(1970, CURRENT_YEAR);
   const techSkillSuggestions = cvLang === "en" ? EN_TECH_SKILLS : AR_TECH_SKILLS;
   const softSkillSuggestions = cvLang === "en" ? EN_SOFT_SKILLS : AR_SOFT_SKILLS;
+  const roleOptions = cvLang === "en" ? EN_ROLES : AR_ROLES;
 
   const L = cvLang === "en" ? {
     city: "City", experienceHeading: "Work Experience & Training", expCard: "Experience",
@@ -564,8 +583,17 @@ export default function AtsCvBuilder({ accessCode }) {
     courseName: "Course Name", courseHours: "Hours", courseProvider: "Provider / Institution",
     courseDate: "Completion Date (optional)",
     addCourse: "Add another course",
+    courseLicenseToggle: "Did you get a license / certificate number?",
+    courseLicenseLabel: "License / Certificate Number",
     altPhoneToggle: "Show a different phone number on the CV",
     altPhoneLabel: "CV Phone Number",
+    targetRolesLabel: "Target Role(s)",
+    targetRolesPh: "Search or select a role...",
+    targetRolesHint: "You can select more than one, or add your own. Used to tailor your experience — it will not appear in the PDF.",
+    certsHeading: "Certifications & Memberships", certsSubheading: "Standalone professional certifications and memberships (not training courses).",
+    certsHint: "Optional — e.g. SOCPA, CMA, or a professional membership.",
+    certCard: "Certification / Membership", certName: "Certification / Membership Name",
+    certIssuingBody: "Issuing Body", certDate: "Date (optional)", addCert: "Add another certification",
   } : {
     city: "المدينة", experienceHeading: "الخبرات العملية والتدريب", expCard: "خبرة",
     jobTitle: "المسمى الوظيفي", employer: "جهة العمل", from: "من", to: "إلى", month: "الشهر", year: "السنة",
@@ -594,8 +622,17 @@ export default function AtsCvBuilder({ accessCode }) {
     courseName: "اسم الدورة", courseHours: "عدد الساعات", courseProvider: "الجهة المانحة",
     courseDate: "تاريخ الحصول عليها (اختياري)",
     addCourse: "إضافة دورة أخرى",
+    courseLicenseToggle: "هل حصلت على ترخيص / رقم شهادة؟",
+    courseLicenseLabel: "رقم الترخيص / الشهادة",
     altPhoneToggle: "عرض رقم جوال مختلف في السيرة الذاتية",
     altPhoneLabel: "رقم الجوال في السيرة",
+    targetRolesLabel: "الوظيفة/الوظائف المستهدفة",
+    targetRolesPh: "ابحث أو اختر وظيفة...",
+    targetRolesHint: "يمكنك اختيار أكثر من وظيفة، أو إضافة وظيفة غير موجودة بالقائمة. تُستخدم لتخصيص تجربتك فقط — لن تظهر في ملف الـ PDF.",
+    certsHeading: "الشهادات والعضويات المهنية", certsSubheading: "شهادات وعضويات مهنية مستقلة (وليست دورات تدريبية).",
+    certsHint: "اختياري — مثل SOCPA أو CMA أو عضوية مهنية.",
+    certCard: "شهادة / عضوية", certName: "اسم الشهادة / العضوية",
+    certIssuingBody: "الجهة المانحة", certDate: "التاريخ (اختياري)", addCert: "إضافة شهادة أخرى",
   };
 
   // ── Validation (gentle, non-blocking) ──
@@ -635,6 +672,7 @@ export default function AtsCvBuilder({ accessCode }) {
 
   const displayProjects = projects.filter((p) => p.name || p.details);
   const displayCourses = courses.filter((c) => c.name || c.hours || c.provider || c.date);
+  const displayCertifications = certifications.filter((c) => c.name || c.issuingBody || c.date);
   const displayAchievementsStr = achievements.filter((a) => a.trim()).join("\n");
 
   const techSkillsStr = techSkillTags.join(sep);
@@ -672,19 +710,18 @@ export default function AtsCvBuilder({ accessCode }) {
             city: cityValue,
             // Collected for future AI/matching features, but the PDF
             // template no longer renders these into the CV output.
-            targetRole: form.targetRole,
-            objective: form.objective,
+            targetRoles: targetRoles.join(sep),
             yearsOfExperience: form.yearsOfExperience,
             linkedin: form.linkedin,
             summary: form.summary,
             achievements: displayAchievementsStr,
-            certs: form.certs,
             languages: languagesStr,
           },
           experiences: displayExperiences,
           education: displayEducation,
           projects: displayProjects,
           courses: displayCourses,
+          certifications: displayCertifications,
           techSkills: techSkillsStr,
           softSkills: softSkillsStr,
           lang: cvLang,
@@ -949,17 +986,27 @@ export default function AtsCvBuilder({ accessCode }) {
                         </span>
                         {meta && <span style={{ fontSize: 11.5, color: C.slate, fontStyle: "italic" }}>{meta}</span>}
                       </div>
+                      {x.hasLicense && x.licenseNumber && (
+                        <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}><strong style={{ color: C.ink }}>{t.licenseNumber}:</strong> {x.licenseNumber}</div>
+                      )}
                     </div>
                   );
                 })}
               </Section>
             )}
 
-            {form.certs && (
+            {displayCertifications.length > 0 && (
               <Section title={t.certs}>
-                <ul style={ulBody(cvDir)}>
-                  {splitLines(form.certs).map((c, i) => <li key={i} style={liBody(cvDir)}>{c}</li>)}
-                </ul>
+                {displayCertifications.map((x, i) => (
+                  <div key={i} style={{ marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <span style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>
+                        {x.name}{x.issuingBody && <span style={{ color: C.slate, fontWeight: 500 }}> — {x.issuingBody}</span>}
+                      </span>
+                      {x.date && <span style={{ fontSize: 11.5, color: C.slate, fontStyle: "italic" }}>{x.date}</span>}
+                    </div>
+                  </div>
+                ))}
               </Section>
             )}
 
@@ -1043,8 +1090,7 @@ export default function AtsCvBuilder({ accessCode }) {
               </label>
               {useAltCvPhone && field("displayPhone", L.altPhoneLabel, form.displayPhone, set("displayPhone"), { ph: "+9665xxxxxxxx", hint: "يظهر في السيرة الذاتية بدلاً من رقم الجوال أعلاه." })}
 
-              {field("targetRole", "الوظيفة المستهدفة", form.targetRole, set("targetRole"), { req: true, ph: "محاسب / محلل مالي", hint: "لتخصيص سيرتك فقط — لن تظهر هذه المعلومة في ملف الـ PDF." })}
-              {field("objective", "وظائف مستهدفة إضافية (اختياري)", form.objective, set("objective"), { ph: "محاسب أول، محلل مالي، مراقب مالي", hint: "اختياري لأهداف وظيفية إضافية — لن تظهر أيضاً في ملف الـ PDF." })}
+              {tagsInput("targetRoles", `${L.targetRolesLabel} *`, targetRoles, setTargetRoles, { ph: L.targetRolesPh, hint: L.targetRolesHint, suggestions: roleOptions })}
               {fieldArea("summary", "الملخص المهني", form.summary, set("summary"), { rows: 4, ph: "اكتب 2-3 أسطر عن خبرتك ونقاط قوتك موجّهة للوظيفة المستهدفة.", hint: "اختياري — لكنه أول ما يقرأه صاحب العمل." })}
             </>
           )}
@@ -1229,8 +1275,18 @@ export default function AtsCvBuilder({ accessCode }) {
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                       {field(`course-${i}-provider`, L.courseProvider, x.provider, setCourse(i, "provider"), {})}
-                      {selectField(`course-${i}-date`, L.courseDate, x.date, setCourse(i, "date"), gradYearOptions)}
+                      {selectField(`course-${i}-date`, L.courseDate, x.date, setCourse(i, "date"), pastYearOptions)}
                     </div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: THEME.text, marginTop: 4, marginBottom: x.hasLicense ? 14 : 0, cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={!!x.hasLicense}
+                        onChange={(e) => setCourse(i, "hasLicense")({ target: { value: e.target.checked } })}
+                        style={{ width: 16, height: 16, accentColor: THEME.primary }}
+                      />
+                      {L.courseLicenseToggle}
+                    </label>
+                    {x.hasLicense && field(`course-${i}-license`, L.courseLicenseLabel, x.licenseNumber, setCourse(i, "licenseNumber"), {})}
                   </div>
                 ))}
                 <button onClick={addCourse} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addCourse}</button>
@@ -1238,11 +1294,26 @@ export default function AtsCvBuilder({ accessCode }) {
             </>
           )}
 
-          {/* STEP 5 - Certs */}
+          {/* STEP 5 - Certifications & Memberships (standalone credentials, distinct from Training Courses) */}
           {step === 5 && (
             <>
-              <SectionTitle>الشهادات المهنية</SectionTitle>
-              {fieldArea("certs", "الشهادات", form.certs, set("certs"), { rows: 5, ph: "كل شهادة في سطر:\nشهادة SOCPA\nشهادة CMA (قيد الدراسة)\nعضوية الهيئة السعودية للمحاسبين القانونيين", hint: "اختياري — لكنه يقوّي السيرة كثيراً في مجال المحاسبة. اكتب كل شهادة في سطر." })}
+              <SectionTitle>{L.certsHeading}</SectionTitle>
+              <div style={hintStyle}>{L.certsSubheading}</div>
+              <div style={{ ...hintStyle, marginBottom: 16 }}>{L.certsHint}</div>
+              {certifications.map((x, i) => (
+                <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginBottom: 14, background: THEME.card }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>{L.certCard} #{i + 1}</span>
+                    <button onClick={() => rmCert(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    {field(`cert-${i}-name`, L.certName, x.name, setCert(i, "name"), { ph: "SOCPA" })}
+                    {field(`cert-${i}-issuingBody`, L.certIssuingBody, x.issuingBody, setCert(i, "issuingBody"), {})}
+                  </div>
+                  {selectField(`cert-${i}-date`, L.certDate, x.date, setCert(i, "date"), pastYearOptions)}
+                </div>
+              ))}
+              <button onClick={addCert} style={btnAdd}><Plus size={16} /> {L.addCert}</button>
             </>
           )}
 
