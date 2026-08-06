@@ -975,7 +975,7 @@ export default function AtsCvBuilder({ accessCode }) {
                     <div style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>
                       {[x.degree, x.school, x.year].filter(Boolean).join(" | ")}
                     </div>
-                    {x.detail && <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}>{x.detail}</div>}
+                    {x.detail && <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}><strong style={{ color: C.ink }}>{t.gpa}:</strong> {x.detail}</div>}
                     {x.gradProject && <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}><strong style={{ color: C.ink }}>{t.gradProject}:</strong> {x.gradProject}</div>}
                   </div>
                 ))}
