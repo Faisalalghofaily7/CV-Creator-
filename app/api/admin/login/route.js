@@ -13,13 +13,13 @@ export async function POST(request) {
       return NextResponse.json({ error: "الرجاء إدخال اسم المستخدم وكلمة المرور." }, { status: 400 });
     }
 
-    const role = await verifyAdminCredentials(username, password);
-    if (!role) {
+    const ok = await verifyAdminCredentials(username, password);
+    if (!ok) {
       return NextResponse.json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة." }, { status: 401 });
     }
 
-    const { token, maxAgeSeconds } = await createAdminSession(role);
-    const res = NextResponse.json({ ok: true, role });
+    const { token, maxAgeSeconds } = await createAdminSession();
+    const res = NextResponse.json({ ok: true });
     setSessionCookie(res, token, maxAgeSeconds);
     return res;
   } catch (err) {

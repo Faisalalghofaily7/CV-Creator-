@@ -12,13 +12,8 @@ function redirectToLogin() {
   window.location.assign("/admin/login");
 }
 
-export default function AdminCodes({ role }) {
-  // Staff accounts can only use the CV archive — the codes tab isn't even
-  // shown to them, though the real boundary is server-side (requireRole:
-  // "admin" on the codes routes; this is just so they never see a tab that
-  // would immediately 403 if they clicked it).
-  const isAdmin = role === "admin";
-  const [tab, setTab] = useState(isAdmin ? "codes" : "archive"); // "codes" | "archive"
+export default function AdminCodes() {
+  const [tab, setTab] = useState("codes"); // "codes" | "archive"
   const [loggingOut, setLoggingOut] = useState(false);
 
   const [codes, setCodes] = useState([]);
@@ -72,8 +67,8 @@ export default function AdminCodes({ role }) {
   }
 
   useEffect(() => {
-    if (isAdmin) loadCodes();
-  }, [isAdmin]);
+    loadCodes();
+  }, []);
 
   useEffect(() => {
     if (tab === "archive") loadCvs(statusFilter);
@@ -183,7 +178,7 @@ export default function AdminCodes({ role }) {
   return (
     <div dir="rtl" style={{ minHeight: "100vh", background: C.paper, fontFamily: "'Segoe UI', Tahoma, sans-serif", color: C.ink }}>
       <div style={{ background: C.ink, padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ color: "#fff", fontSize: 17, fontWeight: 700 }}>{isAdmin ? "لوحة المشرف — توليد أكواد الطلبات" : "لوحة الموظفين — أرشيف السير الذاتية"}</div>
+        <div style={{ color: "#fff", fontSize: 17, fontWeight: 700 }}>لوحة المشرف — توليد أكواد الطلبات</div>
         <button onClick={handleLogout} disabled={loggingOut} style={{ ...btnGhostOnDark, opacity: loggingOut ? 0.7 : 1 }}>
           <LogOut size={15} /> تسجيل الخروج
         </button>
@@ -195,20 +190,14 @@ export default function AdminCodes({ role }) {
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
-          {isAdmin ? (
-            <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => setTab("codes")} style={tabBtnStyle(tab === "codes")}>
-                <Sparkles size={15} /> الأكواد
-              </button>
-              <button onClick={() => setTab("archive")} style={tabBtnStyle(tab === "archive")}>
-                <Archive size={15} /> أرشيف السير الذاتية
-              </button>
-            </div>
-          ) : (
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: C.ink }}>
-              <Archive size={16} /> أرشيف السير الذاتية
-            </div>
-          )}
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => setTab("codes")} style={tabBtnStyle(tab === "codes")}>
+              <Sparkles size={15} /> الأكواد
+            </button>
+            <button onClick={() => setTab("archive")} style={tabBtnStyle(tab === "archive")}>
+              <Archive size={15} /> أرشيف السير الذاتية
+            </button>
+          </div>
           <button
             onClick={() => (tab === "archive" ? loadCvs(statusFilter) : loadCodes())}
             disabled={tab === "archive" ? loadingCvs : loadingCodes}
@@ -219,7 +208,7 @@ export default function AdminCodes({ role }) {
           </button>
         </div>
 
-        {tab === "codes" && isAdmin ? (
+        {tab === "codes" ? (
         <>
         <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
           <button onClick={handleGenerate} disabled={generating} style={{ ...btnPrimary, opacity: generating ? 0.7 : 1 }}>
