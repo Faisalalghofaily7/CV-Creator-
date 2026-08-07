@@ -6,5 +6,5 @@ import AdminCodes from "../../components/AdminCodes";
 export default async function AdminPage() {
   const session = await getAdminSession(cookies());
   if (!session) redirect("/admin/login");
-  return <AdminCodes />;
+  return <AdminCodes role={session.role} />;
 }

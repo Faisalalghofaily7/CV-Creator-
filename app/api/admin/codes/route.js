@@ -12,7 +12,7 @@ function generateCode() {
 }
 
 export async function GET(request) {
-  const authError = await requireAdminApi(request);
+  const authError = await requireAdminApi(request, { requireRole: "admin" });
   if (authError) return authError;
 
   try {
@@ -30,7 +30,7 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
-  const authError = await requireAdminApi(request);
+  const authError = await requireAdminApi(request, { requireRole: "admin" });
   if (authError) return authError;
 
   try {
