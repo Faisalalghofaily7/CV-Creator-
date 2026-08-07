@@ -146,7 +146,16 @@ export async function POST(request) {
     // upload + extra DB round trips the user has no reason to wait for.
     const archiveStart = Date.now();
     waitUntil(
-      archiveGeneratedPdf({ accessCode: code, pdfBuffer, applicantName: form?.name, lang }).then(() => {
+      archiveGeneratedPdf({
+        accessCode: code,
+        pdfBuffer,
+        applicantName: form?.name,
+        applicantEmail: form?.email,
+        applicantPhone: form?.phone,
+        applicantCity: form?.city,
+        applicantTargetRole: form?.targetRoles,
+        lang,
+      }).then(() => {
         console.log(`[generate-pdf] archive took ${Date.now() - archiveStart}ms (background)`);
       })
     );

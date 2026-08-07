@@ -17,6 +17,33 @@ ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS pdf_language TEXT;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_name TEXT;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
 
+-- Applicant contact/targeting fields, captured at export time so admin staff
+-- can review a full record without opening the PDF — applicant_target_role
+-- in particular is intentionally never rendered into the CV/PDF itself, but
+-- staff need it to know which type of company to send the CV to.
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_email TEXT;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_phone TEXT;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_city TEXT;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_target_role TEXT;
+
+-- Sending status: tracks whether staff have sent this applicant's CV out
+-- yet. Defaults to 'pending' so every newly archived CV starts there.
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS sending_status TEXT NOT NULL DEFAULT 'pending'
+  CHECK (sending_status IN ('pending', 'in_progress', 'on_hold', 'sent'));
+
+-- Timestamped audit trail of every sending-status change, so staff can see
+-- when a record moved between states and (best-effort) who changed it —
+-- there's currently a single shared admin login, not per-admin accounts, so
+-- changed_by records that shared admin username rather than a user id.
+CREATE TABLE IF NOT EXISTS sending_status_history (
+  id SERIAL PRIMARY KEY,
+  access_code_id INTEGER NOT NULL REFERENCES access_codes(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  changed_by TEXT,
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sending_status_history_access_code_id_idx ON sending_status_history (access_code_id);
+
 -- Admin sessions: opaque random tokens (the unguessable value IS the
 -- credential — there is nothing to sign/verify beyond an exact DB match),
 -- issued on successful login and stored in an httpOnly cookie.

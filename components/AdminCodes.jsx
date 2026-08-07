@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw } from "lucide-react";
+import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock } from "lucide-react";
+import { SENDING_STATUSES, SENDING_STATUS_LABELS, SENDING_STATUS_COLORS } from "../lib/sendingStatus";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
@@ -26,6 +27,11 @@ export default function AdminCodes() {
   const [cvs, setCvs] = useState([]);
   const [loadingCvs, setLoadingCvs] = useState(false);
   const [cvsError, setCvsError] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [updatingStatusId, setUpdatingStatusId] = useState(null);
+  const [statusErrors, setStatusErrors] = useState({});
+  const [expandedId, setExpandedId] = useState(null);
+  const [historyCache, setHistoryCache] = useState({});
 
   async function loadCodes() {
     setLoadingCodes(true);
@@ -43,11 +49,12 @@ export default function AdminCodes() {
     }
   }
 
-  async function loadCvs() {
+  async function loadCvs(filter) {
     setLoadingCvs(true);
     setCvsError("");
     try {
-      const res = await fetch("/api/admin/cvs");
+      const qs = filter ? `?status=${encodeURIComponent(filter)}` : "";
+      const res = await fetch(`/api/admin/cvs${qs}`);
       if (res.status === 401) return redirectToLogin();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "تعذّر تحميل الأرشيف.");
@@ -64,8 +71,8 @@ export default function AdminCodes() {
   }, []);
 
   useEffect(() => {
-    if (tab === "archive") loadCvs();
-  }, [tab]);
+    if (tab === "archive") loadCvs(statusFilter);
+  }, [tab, statusFilter]);
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -121,6 +128,53 @@ export default function AdminCodes() {
     }
   }
 
+  async function updateSendingStatus(id, newStatus) {
+    const previous = cvs.find((c) => c.id === id)?.sending_status;
+    setUpdatingStatusId(id);
+    setStatusErrors((prev) => ({ ...prev, [id]: "" }));
+    // Optimistic update — reconciled/reverted below.
+    setCvs((prev) => prev.map((c) => (c.id === id ? { ...c, sending_status: newStatus } : c)));
+    try {
+      const res = await fetch(`/api/admin/cvs/${id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر تحديث الحالة.");
+      // Keep an expanded timeline in sync with the change that was just made.
+      if (expandedId === id) loadHistory(id);
+    } catch (err) {
+      setCvs((prev) => prev.map((c) => (c.id === id ? { ...c, sending_status: previous } : c)));
+      setStatusErrors((prev) => ({ ...prev, [id]: err.message || "تعذّر تحديث الحالة." }));
+    } finally {
+      setUpdatingStatusId(null);
+    }
+  }
+
+  async function loadHistory(id) {
+    setHistoryCache((prev) => ({ ...prev, [id]: { loading: true, error: "", items: prev[id]?.items || [] } }));
+    try {
+      const res = await fetch(`/api/admin/cvs/${id}/history`);
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر تحميل السجل.");
+      setHistoryCache((prev) => ({ ...prev, [id]: { loading: false, error: "", items: data.history || [] } }));
+    } catch (err) {
+      setHistoryCache((prev) => ({ ...prev, [id]: { loading: false, error: err.message || "تعذّر تحميل السجل.", items: [] } }));
+    }
+  }
+
+  function toggleHistory(id) {
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(id);
+    if (!historyCache[id]) loadHistory(id);
+  }
+
   return (
     <div dir="rtl" style={{ minHeight: "100vh", background: C.paper, fontFamily: "'Segoe UI', Tahoma, sans-serif", color: C.ink }}>
       <div style={{ background: C.ink, padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -130,7 +184,7 @@ export default function AdminCodes() {
         </button>
       </div>
 
-      <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 20px 60px" }}>
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px 60px" }}>
         <div style={noteBanner}>
           هذه اللوحة تحتوي بيانات شخصية حقيقية لمتقدمين (أرشيف السير الذاتية) — الوصول محمي بجلسة تسجيل دخول آمنة على الخادم.
         </div>
@@ -145,7 +199,7 @@ export default function AdminCodes() {
             </button>
           </div>
           <button
-            onClick={() => (tab === "archive" ? loadCvs() : loadCodes())}
+            onClick={() => (tab === "archive" ? loadCvs(statusFilter) : loadCodes())}
             disabled={tab === "archive" ? loadingCvs : loadingCodes}
             style={tabBtnStyle(false)}
             title="تحديث القائمة — البيانات لا تتحدث تلقائيًا إذا تغيّرت من جلسة أخرى"
@@ -173,6 +227,7 @@ export default function AdminCodes() {
         </div>
 
         <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: C.soft }}>
@@ -215,50 +270,127 @@ export default function AdminCodes() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
         </>
         ) : (
-        <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: C.soft }}>
-                <th style={thStyle}>الكود</th>
-                <th style={thStyle}>رقم طلب سلة</th>
-                <th style={thStyle}>اسم المتقدم</th>
-                <th style={thStyle}>اللغة</th>
-                <th style={thStyle}>تاريخ الإنشاء</th>
-                <th style={thStyle}>الملف</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loadingCvs ? (
-                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
-              ) : cvsError ? (
-                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{cvsError}</td></tr>
-              ) : cvs.length === 0 ? (
-                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد سير ذاتية محفوظة بعد</td></tr>
-              ) : (
-                cvs.map((v) => (
-                  <tr key={v.id} style={{ borderTop: `1px solid ${C.line}` }}>
-                    <td style={{ ...tdStyle, fontFamily: "monospace", fontWeight: 700 }}>{v.code}</td>
-                    <td style={tdStyle}>{v.salla_order_number || "—"}</td>
-                    <td style={tdStyle}>{v.applicant_name || "—"}</td>
-                    <td style={tdStyle}>{v.pdf_language === "en" ? "English" : "العربية"}</td>
-                    <td style={{ ...tdStyle, color: C.slate, fontSize: 12 }}>{v.generated_at ? new Date(v.generated_at).toLocaleString("ar-SA") : "—"}</td>
-                    <td style={tdStyle}>
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: C.slate }}>تصفية حسب حالة الإرسال:</span>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 10px", fontSize: 12.5 }}>
+              <option value="">الكل</option>
+              {SENDING_STATUSES.map((s) => (
+                <option key={s} value={s}>{SENDING_STATUS_LABELS[s]}</option>
+              ))}
+            </select>
+          </div>
+
+          {loadingCvs ? (
+            <div style={emptyStateBox}>جارٍ التحميل...</div>
+          ) : cvsError ? (
+            <div style={{ ...emptyStateBox, color: "#b3261e" }}>{cvsError}</div>
+          ) : cvs.length === 0 ? (
+            <div style={emptyStateBox}>{statusFilter ? "لا توجد سير ذاتية بهذه الحالة." : "لا توجد سير ذاتية محفوظة بعد."}</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {cvs.map((v) => {
+                const colors = SENDING_STATUS_COLORS[v.sending_status] || SENDING_STATUS_COLORS.pending;
+                const history = historyCache[v.id];
+                const expanded = expandedId === v.id;
+                return (
+                  <div key={v.id} style={archiveCard}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+                      <div>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: C.ink }}>{v.applicant_name || "بدون اسم"}</div>
+                        {v.applicant_target_role && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3, fontSize: 12.5, color: C.slate, fontWeight: 600 }}>
+                            <Target size={13} /> {v.applicant_target_role}
+                          </div>
+                        )}
+                      </div>
+                      <span style={{ display: "inline-block", background: colors.bg, color: colors.fg, fontSize: 11.5, fontWeight: 700, borderRadius: 999, padding: "5px 12px", whiteSpace: "nowrap" }}>
+                        {SENDING_STATUS_LABELS[v.sending_status] || v.sending_status}
+                      </span>
+                    </div>
+
+                    <div style={fieldGrid}>
+                      <Field icon={Mail} label="البريد الإلكتروني" value={v.applicant_email} />
+                      <Field icon={Phone} label="رقم الجوال" value={v.applicant_phone} />
+                      <Field icon={MapPin} label="المدينة" value={v.applicant_city} />
+                      <Field icon={Hash} label="رقم طلب سلة" value={v.salla_order_number} />
+                      <Field icon={KeyRound} label="كود الدخول" value={v.code} mono />
+                      <Field icon={Languages} label="اللغة" value={v.pdf_language === "en" ? "English" : "العربية"} />
+                      <Field icon={Clock} label="تاريخ الإنشاء" value={v.generated_at ? new Date(v.generated_at).toLocaleString("ar-SA") : "—"} />
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
                       <a href={`/api/admin/cvs/${v.id}/pdf`} target="_blank" rel="noreferrer" style={btnViewLink}>
-                        <FileText size={14} /> عرض / تحميل
+                        <FileText size={14} /> عرض / تحميل PDF
                       </a>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: C.slate, fontWeight: 600 }}>
+                        حالة الإرسال:
+                        <select
+                          value={v.sending_status}
+                          disabled={updatingStatusId === v.id}
+                          onChange={(e) => updateSendingStatus(v.id, e.target.value)}
+                          style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12.5, opacity: updatingStatusId === v.id ? 0.6 : 1 }}
+                        >
+                          {SENDING_STATUSES.map((s) => (
+                            <option key={s} value={s}>{SENDING_STATUS_LABELS[s]}</option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <button onClick={() => toggleHistory(v.id)} style={btnHistoryToggle}>
+                        {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} سجل الحالة
+                      </button>
+                    </div>
+
+                    {statusErrors[v.id] && <div style={{ marginTop: 8, fontSize: 12, color: "#b3261e" }}>{statusErrors[v.id]}</div>}
+
+                    {expanded && (
+                      <div style={historyBox}>
+                        {history?.loading ? (
+                          <div style={{ fontSize: 12.5, color: C.slate }}>جارٍ التحميل...</div>
+                        ) : history?.error ? (
+                          <div style={{ fontSize: 12.5, color: "#b3261e" }}>{history.error}</div>
+                        ) : !history?.items?.length ? (
+                          <div style={{ fontSize: 12.5, color: C.slate }}>لا يوجد سجل بعد.</div>
+                        ) : (
+                          <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+                            {history.items.map((h, i) => (
+                              <li key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12.5 }}>
+                                <span style={{ width: 7, height: 7, borderRadius: "50%", background: (SENDING_STATUS_COLORS[h.status] || SENDING_STATUS_COLORS.pending).fg, flexShrink: 0 }} />
+                                <span style={{ fontWeight: 700, color: C.ink }}>{SENDING_STATUS_LABELS[h.status] || h.status}</span>
+                                <span style={{ color: C.slate }}>{new Date(h.changed_at).toLocaleString("ar-SA")}</span>
+                                {h.changed_by && <span style={{ color: C.slate }}>— {h.changed_by}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
         )}
       </div>
       <style>{`.spin-admin { animation: spin-admin 1s linear infinite; } @keyframes spin-admin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+function Field({ icon: Icon, label, value, mono }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.slate, fontWeight: 600, marginBottom: 2 }}>
+        <Icon size={12} /> {label}
+      </div>
+      <div style={{ fontSize: 13, color: C.ink, fontFamily: mono ? "monospace" : "inherit", overflowWrap: "break-word" }}>{value || "—"}</div>
     </div>
   );
 }
@@ -270,7 +402,12 @@ const btnIcon = { background: "transparent", border: "none", cursor: "pointer", 
 const noteBanner = { background: "#e8eef4", border: "1px dashed #dde4ec", borderRadius: 8, padding: "10px 14px", fontSize: 12.5, color: "#3a4a5a", marginBottom: 20, textAlign: "center", lineHeight: 1.6 };
 const thStyle = { textAlign: "start", padding: "10px 14px", fontSize: 12, fontWeight: 700, color: "#1a3a5c", borderBottom: "1px solid #dde4ec" };
 const tdStyle = { padding: "10px 14px", fontSize: 12.5, color: "#1a3a5c", verticalAlign: "middle" };
-const btnViewLink = { display: "inline-flex", alignItems: "center", gap: 6, background: "#1a3a5c", color: "#ffffff", borderRadius: 6, padding: "5px 10px", fontSize: 12, fontWeight: 600, textDecoration: "none" };
+const btnViewLink = { display: "inline-flex", alignItems: "center", gap: 6, background: "#1a3a5c", color: "#ffffff", borderRadius: 6, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, textDecoration: "none" };
+const btnHistoryToggle = { display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", color: "#1a3a5c", border: "1px solid #dde4ec", borderRadius: 6, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
+const emptyStateBox = { background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 32, textAlign: "center", color: C.slate, fontSize: 13 };
+const archiveCard = { background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: "16px 18px" };
+const fieldGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "12px 16px", marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.line}` };
+const historyBox = { marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${C.line}` };
 function tabBtnStyle(active) {
   return {
     display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 8,

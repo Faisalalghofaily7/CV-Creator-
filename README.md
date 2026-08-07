@@ -24,7 +24,8 @@ npm run dev
 - `app/api/admin/codes/route.js` و`app/api/admin/codes/[id]/route.js` — عرض/إنشاء/تعديل أكواد الدخول (لوحة المشرف).
 - `app/api/access/redeem/route.js` — التحقق من كود الدخول عند بوابة المستخدم فقط (لا يُحوَّل الكود إلى "مستخدَم" هنا).
 - `lib/userSession.js` — إدارة جلسة المستخدم (جدول `user_sessions`) التي تتذكّر الكود المُتحقَّق منه عبر تحديث الصفحة، قبل أن يُستهلَك الكود فعليًا.
-- `app/api/admin/cvs/route.js` و`app/api/admin/cvs/[id]/pdf/route.js` — أرشيف السير الذاتية المولَّدة (لوحة المشرف)؛ نقطة الـ PDF تجلب الملف الخاص من Blob وتُعيد بثّه للمتصفح، فلا يُكشف رابط Blob أو التوكن مطلقًا.
+- `app/api/admin/cvs/route.js` — قائمة أرشيف السير الذاتية (يدعم `?status=` للتصفية حسب حالة الإرسال). `app/api/admin/cvs/[id]/pdf/route.js` — يجلب الملف الخاص من Blob ويُعيد بثّه للمتصفح، فلا يُكشف رابط Blob أو التوكن مطلقًا. `app/api/admin/cvs/[id]/status/route.js` — تحديث حالة الإرسال (ويُضيف سطرًا لسجل `sending_status_history`). `app/api/admin/cvs/[id]/history/route.js` — سجل تغييرات الحالة لسجل واحد.
+- `lib/sendingStatus.js` — قائمة حالات الإرسال الأربع وتسمياتها وألوانها بالعربية، مشتركة بين نقاط النهاية (للتحقق) ولوحة المشرف (للعرض).
 - `lib/adminAuth.js` — التحقق من بيانات المشرف (bcrypt) وإدارة جلسات تسجيل الدخول (جدول `admin_sessions`)؛ يُستخدم فقط على الخادم.
 - `app/api/admin/login/route.js` و`app/api/admin/logout/route.js` — تسجيل الدخول/الخروج؛ عند النجاح يُنشئ جلسة في قاعدة البيانات ويضبط كوكي `admin_session` (httpOnly + secure في الإنتاج).
 - `app/admin/page.js` و`app/admin/login/page.js` — مكوّنات خادم (Server Components) تتحقق من الجلسة قبل العرض وتُعيد التوجيه لصفحة الدخول عند عدم وجود جلسة صالحة.
@@ -71,6 +72,26 @@ ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS pdf_language TEXT;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_name TEXT;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
 
+-- بيانات المتقدم الكاملة (لعرضها في لوحة المشرف — applicant_target_role لا تظهر أبدًا في ملف الـ PDF نفسه)
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_email TEXT;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_phone TEXT;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_city TEXT;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_target_role TEXT;
+
+-- حالة إرسال السيرة الذاتية للشركات (تُحدَّثها لوحة المشرف)
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS sending_status TEXT NOT NULL DEFAULT 'pending'
+  CHECK (sending_status IN ('pending', 'in_progress', 'on_hold', 'sent'));
+
+-- سجل زمني لكل تغيير في حالة الإرسال
+CREATE TABLE IF NOT EXISTS sending_status_history (
+  id SERIAL PRIMARY KEY,
+  access_code_id INTEGER NOT NULL REFERENCES access_codes(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  changed_by TEXT,
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sending_status_history_access_code_id_idx ON sending_status_history (access_code_id);
+
 -- جلسات تسجيل دخول المشرف
 CREATE TABLE IF NOT EXISTS admin_sessions (
   token TEXT PRIMARY KEY,
@@ -103,7 +124,11 @@ node --env-file=.env.development.local scripts/init-db.mjs
 
 ### أرشيف السير الذاتية
 
-عند تحميل المستخدم لسيرته الذاتية (`/api/generate-pdf`)، يحاول الخادم أيضًا رفع نسخة من الملف إلى Blob وربطها بسجل الكود المستخدم في قاعدة البيانات — هذا يحدث في الخلفية بعد توليد الملف واستهلاك الكود مباشرة وقبل إرساله للمتصفح، ولا يمكن أن يمنع المستخدم من الحصول على ملفه: أي خطأ في الرفع أو الحفظ يُسجَّل في السجلات (logs) فقط ولا يُعاد للمستخدم كخطأ. لوحة المشرف تعرض هذا الأرشيف في تبويب "أرشيف السير الذاتية"، وزر "عرض / تحميل" يفتح الملف عبر نقطة نهاية على الخادم تجلبه من Blob الخاص وتبثّه للمتصفح مباشرة.
+عند تحميل المستخدم لسيرته الذاتية (`/api/generate-pdf`)، يحاول الخادم أيضًا رفع نسخة من الملف إلى Blob وربطها بسجل الكود المستخدم في قاعدة البيانات (مع بيانات المتقدم: الاسم، البريد، الجوال، المدينة، الوظيفة المستهدفة) — هذا يحدث في الخلفية بعد توليد الملف واستهلاك الكود مباشرة وقبل إرساله للمتصفح، ولا يمكن أن يمنع المستخدم من الحصول على ملفه: أي خطأ في الرفع أو الحفظ يُسجَّل في السجلات (logs) فقط ولا يُعاد للمستخدم كخطأ.
+
+لوحة المشرف تعرض هذا الأرشيف في تبويب "أرشيف السير الذاتية" كبطاقات (متوافقة مع الجوال) تُظهر كل بيانات المتقدم — بما فيها **الوظيفة المستهدفة**، والتي لا تظهر أبدًا داخل ملف الـ PDF نفسه لكنها ضرورية للفريق ليعرف نوع الشركات المناسبة لإرسال السيرة إليها. زر "عرض / تحميل" يفتح الملف عبر نقطة نهاية على الخادم تجلبه من Blob الخاص وتبثّه للمتصفح مباشرة.
+
+لكل سجل **حالة إرسال** (`sending_status`) بأربع حالات: بانتظار الإرسال (الافتراضية عند إنشاء السجل) → قيد التنفيذ → معلّق / تم الإرسال. يمكن للمشرف تغييرها من قائمة منسدلة على البطاقة (`PATCH /api/admin/cvs/[id]/status`)، والأرشيف قابل للتصفية حسب الحالة (`GET /api/admin/cvs?status=...`). كل تغيير يُسجَّل بختم زمني (والمستخدم المشرف إن أمكن — يوجد حاليًا حساب مشرف واحد مشترك فقط) في جدول `sending_status_history`، ويظهر كسجل زمني قابل للطي أسفل كل بطاقة (`GET /api/admin/cvs/[id]/history`).
 
 ### تسجيل دخول المشرف (آمن)
 
