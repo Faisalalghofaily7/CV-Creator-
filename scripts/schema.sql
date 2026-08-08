@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS admin_sessions (
   expires_at TIMESTAMPTZ NOT NULL
 );
 
+-- Role decided at login time by which credential set matched (ADMIN_* vs
+-- STAFF_*, see lib/adminAuth.js) and gates which API routes the session may
+-- call — 'staff' can use the CV archive but not the codes endpoints.
+ALTER TABLE admin_sessions ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin', 'staff'));
+
 -- User sessions: lets someone who already validated a code at the gate
 -- resume their form after a page refresh without re-entering it. The code
 -- itself stays 'available' (not consumed) until a PDF is actually exported

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSql } from "../../../../../../lib/db";
-import { requireAdminApi } from "../../../../../../lib/adminAuth";
+import { requireAdminApi, getAdminSessionFromRequest } from "../../../../../../lib/adminAuth";
 import { isValidSendingStatus } from "../../../../../../lib/sendingStatus";
 
 export const runtime = "nodejs";
@@ -11,6 +11,7 @@ export const runtime = "nodejs";
 export async function PATCH(request, { params }) {
   const authError = await requireAdminApi(request);
   if (authError) return authError;
+  const session = await getAdminSessionFromRequest(request);
 
   const id = Number(params.id);
   if (!Number.isInteger(id)) {
@@ -35,9 +36,9 @@ export async function PATCH(request, { params }) {
       return NextResponse.json({ error: "السجل غير موجود." }, { status: 404 });
     }
 
-    // There's a single shared admin login (no per-admin accounts) — record
-    // that shared username as the best-effort "who changed it".
-    const changedBy = process.env.ADMIN_USERNAME || null;
+    // There's one shared login per role (no per-person accounts), so the
+    // session's role uniquely determines which username made this change.
+    const changedBy = (session?.role === "staff" ? process.env.STAFF_USERNAME : process.env.ADMIN_USERNAME) || null;
     await sql`INSERT INTO sending_status_history (access_code_id, status, changed_by) VALUES (${id}, ${status}, ${changedBy})`;
 
     return NextResponse.json({ cv: row });

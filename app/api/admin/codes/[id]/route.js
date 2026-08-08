@@ -5,7 +5,7 @@ import { requireAdminApi } from "../../../../../lib/adminAuth";
 export const runtime = "nodejs";
 
 export async function PATCH(request, { params }) {
-  const authError = await requireAdminApi(request);
+  const authError = await requireAdminApi(request, { requireRole: "admin" });
   if (authError) return authError;
 
   const id = Number(params.id);
