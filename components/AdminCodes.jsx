@@ -6,6 +6,13 @@ import { SENDING_STATUSES, SENDING_STATUS_LABELS, SENDING_STATUS_COLORS } from "
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
+const PACKAGE_OPTIONS = [
+  "باقة الوصول المتكاملة",
+  "إعداد سيرة ذاتية باللغة الإنجليزية",
+  "إعداد سيرة ذاتية باللغة العربية",
+  "إعداد صفحة على لينكدإن احترافية",
+];
+
 // Real server-side session (httpOnly cookie, checked in app/admin/page.js
 // before this component ever renders) — no credentials live here anymore.
 function redirectToLogin() {
@@ -28,6 +35,9 @@ export default function AdminCodes({ role }) {
   const [generateError, setGenerateError] = useState("");
   const [lastGenerated, setLastGenerated] = useState(null);
   const [copiedCode, setCopiedCode] = useState("");
+  const [newOrderNumber, setNewOrderNumber] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [newPackage, setNewPackage] = useState("");
 
   const [cvs, setCvs] = useState([]);
   const [loadingCvs, setLoadingCvs] = useState(false);
@@ -91,16 +101,29 @@ export default function AdminCodes({ role }) {
     }
   }
 
+  const canGenerate = newOrderNumber.trim() !== "" && newPhone.trim() !== "";
+
   async function handleGenerate() {
+    if (!canGenerate) {
+      setGenerateError("رقم طلب سلة ورقم الجوال مطلوبان لتوليد الكود.");
+      return;
+    }
     setGenerating(true);
     setGenerateError("");
     try {
-      const res = await fetch("/api/admin/codes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const res = await fetch("/api/admin/codes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sallaOrderNumber: newOrderNumber.trim(), applicantPhone: newPhone.trim(), requestedPackage: newPackage || null }),
+      });
       if (res.status === 401) return redirectToLogin();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "تعذّر إنشاء الكود.");
       setLastGenerated(data.code);
       setCodes((prev) => [data.code, ...prev]);
+      setNewOrderNumber("");
+      setNewPhone("");
+      setNewPackage("");
     } catch (err) {
       setGenerateError(err.message || "تعذّر إنشاء الكود.");
     } finally {
@@ -222,7 +245,26 @@ export default function AdminCodes({ role }) {
         {tab === "codes" && isAdmin ? (
         <>
         <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-          <button onClick={handleGenerate} disabled={generating} style={{ ...btnPrimary, opacity: generating ? 0.7 : 1 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 14 }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 700, color: C.slate }}>
+              رقم طلب سلة *
+              <input value={newOrderNumber} onChange={(e) => setNewOrderNumber(e.target.value)} placeholder="مثال: 10234" style={inputStyle} />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 700, color: C.slate }}>
+              رقم جوال العميل *
+              <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="مثال: 05xxxxxxxx" style={inputStyle} />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 700, color: C.slate }}>
+              الخدمة المطلوبة (اختياري)
+              <select value={newPackage} onChange={(e) => setNewPackage(e.target.value)} style={inputStyle}>
+                <option value="">— بدون تحديد —</option>
+                {PACKAGE_OPTIONS.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button onClick={handleGenerate} disabled={generating || !canGenerate} style={{ ...btnPrimary, opacity: generating || !canGenerate ? 0.7 : 1 }}>
             {generating ? <><Loader2 size={16} className="spin-admin" /> جارٍ الإنشاء...</> : <><Sparkles size={16} /> توليد كود جديد</>}
           </button>
           {generateError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#b3261e" }}>{generateError}</div>}
@@ -244,17 +286,19 @@ export default function AdminCodes({ role }) {
               <tr style={{ background: C.soft }}>
                 <th style={thStyle}>الكود</th>
                 <th style={thStyle}>الحالة</th>
-                <th style={thStyle}>رقم طلب سلة (اختياري)</th>
+                <th style={thStyle}>رقم طلب سلة</th>
+                <th style={thStyle}>رقم الجوال</th>
+                <th style={thStyle}>الخدمة المطلوبة</th>
                 <th style={thStyle}>وقت الإنشاء</th>
               </tr>
             </thead>
             <tbody>
               {loadingCodes ? (
-                <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
+                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
               ) : loadError ? (
-                <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{loadError}</td></tr>
+                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{loadError}</td></tr>
               ) : codes.length === 0 ? (
-                <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد أكواد بعد — اضغط "توليد كود جديد"</td></tr>
+                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد أكواد بعد — اضغط "توليد كود جديد"</td></tr>
               ) : (
                 codes.map((c) => (
                   <tr key={c.id} style={{ borderTop: `1px solid ${C.line}` }}>
@@ -275,6 +319,8 @@ export default function AdminCodes({ role }) {
                         style={{ ...inputStyle, padding: "6px 8px", fontSize: 12.5 }}
                       />
                     </td>
+                    <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_phone || "—"}</td>
+                    <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.requested_package || "—"}</td>
                     <td style={{ ...tdStyle, color: C.slate, fontSize: 12 }}>{new Date(c.created_at).toLocaleString("ar-SA")}</td>
                   </tr>
                 ))
@@ -330,6 +376,7 @@ export default function AdminCodes({ role }) {
                       <Field icon={MapPin} label="المدينة" value={v.applicant_city} />
                       <Field icon={Hash} label="رقم طلب سلة" value={v.salla_order_number} />
                       <Field icon={KeyRound} label="كود الدخول" value={v.code} mono />
+                      <Field icon={Sparkles} label="الخدمة المطلوبة" value={v.requested_package} />
                       <Field icon={Languages} label="اللغة" value={v.pdf_language === "en" ? "English" : "العربية"} />
                       <Field icon={Clock} label="تاريخ الإنشاء" value={v.generated_at ? new Date(v.generated_at).toLocaleString("ar-SA") : "—"} />
                     </div>

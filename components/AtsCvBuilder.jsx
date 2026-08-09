@@ -30,9 +30,15 @@ function clearProgress() {
 }
 
 // Matches Arabic script (incl. supplement/extended blocks and presentation
-// forms) — used to block Arabic keystrokes when the chosen CV output
-// language is English, so the two languages' data never mix in the PDF.
+// forms) — used to reject Arabic in the name field when the chosen CV
+// output language is English (see guardLangInput). Two variants: a
+// non-global one for `.test()` (a global regex's `lastIndex` state would
+// make repeated `.test()` calls on the same object unreliable), and a
+// global one for `.replace()` so multi-character input — e.g. a pasted or
+// autofilled name, not just single keystrokes — is stripped completely
+// rather than just its first Arabic character.
 const ARABIC_RE = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
+const ARABIC_RE_G = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/g;
 
 const PHONE_RE = /^(\+9665\d{8}|05\d{8})$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/;
@@ -222,6 +228,15 @@ export default function AtsCvBuilder({ accessCode }) {
   // on the form — only one can be open at a time, keyed by field id.
   const [openDropdown, setOpenDropdown] = useState(null);
   const [dropdownQuery, setDropdownQuery] = useState({});
+  // Non-blocking pre-preview check: shown once when the applicant hits
+  // "Preview" with an obviously empty core section — purely a nudge, never
+  // prevents proceeding (see missingSectionModal below).
+  const [showMissingSectionModal, setShowMissingSectionModal] = useState(false);
+  // "Suggest for me" AI helper for points-style fields (experience bullets,
+  // achievements) — purely optional, never replaces manual typing. Keyed by
+  // the same field id as the list itself, holding whatever suggestions were
+  // last generated for it plus loading/error state.
+  const [suggestions, setSuggestions] = useState({});
   const cvDir = cvLang === "ar" ? "rtl" : "ltr";
   const t = CV_LABELS[cvLang];
 
@@ -236,10 +251,15 @@ export default function AtsCvBuilder({ accessCode }) {
   // content mixed into the PDF.
   function guardLangInput(id, value) {
     if (cvLang !== "en" || !ARABIC_RE.test(value)) return value;
+    // Only the name field still rejects Arabic outright — names are never
+    // transliterated/translated. Every other field now allows Arabic input
+    // even in English mode; the AI translates it into professional English
+    // when the CV is generated (see generateAiSummary/generateAiEnhancements).
+    if (id !== "name") return value;
     setBlockedField(id);
     window.clearTimeout(guardLangInput._t);
     guardLangInput._t = window.setTimeout(() => setBlockedField((cur) => (cur === id ? null : cur)), 2000);
-    return value.replace(ARABIC_RE, "");
+    return value.replace(ARABIC_RE_G, "");
   }
 
   function field(id, label, val, onChange, opts = {}) {
@@ -256,7 +276,7 @@ export default function AtsCvBuilder({ accessCode }) {
           style={inputStyle}
           inputMode={opts.numeric ? "numeric" : undefined}
         />
-        {blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {blockedField === id && <div style={warnStyle}>الاسم يجب إدخاله بالأحرف الإنجليزية فقط للسيرة الإنجليزية (بدون ترجمة).</div>}
         {opts.error && <div style={warnStyle}>{opts.error}</div>}
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
       </div>
@@ -430,6 +450,26 @@ export default function AtsCvBuilder({ accessCode }) {
     );
   }
 
+  // Fetches AI-generated, generic starting-point suggestions for a
+  // points-style field (job-title/experience/major-based, never claimed as
+  // the applicant's real achievements — see the honesty note shown with
+  // the results). Purely additive: never overwrites what's already typed.
+  async function suggestForField(id, kind, context) {
+    setSuggestions((prev) => ({ ...prev, [id]: { loading: true, error: "", items: prev[id]?.items || [] } }));
+    try {
+      const res = await fetch("/api/suggest-points", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lang: cvLang, kind, ...context }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(data.suggestions)) throw new Error(data.error || "suggest failed");
+      setSuggestions((prev) => ({ ...prev, [id]: { loading: false, error: "", items: data.suggestions } }));
+    } catch {
+      setSuggestions((prev) => ({ ...prev, [id]: { loading: false, error: t.suggestError, items: prev[id]?.items || [] } }));
+    }
+  }
+
   // Repeatable single-line list (each item = one discrete point), with
   // per-item remove and reorder — used for experience bullets and
   // achievements so each entry is its own item instead of one free-text
@@ -470,6 +510,38 @@ export default function AtsCvBuilder({ accessCode }) {
         })}
         <button type="button" onClick={() => setItems([...items, ""])} style={btnAdd}><Plus size={16} /> {opts.addLabel}</button>
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
+
+        {opts.suggest && (
+          <div style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={() => suggestForField(id, opts.suggest.kind, opts.suggest.context)}
+              disabled={suggestions[id]?.loading}
+              style={{ ...suggestBtnStyle, opacity: suggestions[id]?.loading ? 0.7 : 1 }}
+            >
+              {suggestions[id]?.loading ? <><Loader2 size={14} className="spin" /> {t.suggestLoading}</> : t.suggestForMe}
+            </button>
+            {suggestions[id]?.error && <div style={warnStyle}>{suggestions[id].error}</div>}
+            {!!suggestions[id]?.items?.length && (
+              <div style={{ marginTop: 8, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: 12, background: THEME.soft }}>
+                <div style={{ ...hintStyle, marginTop: 0, marginBottom: 8 }}>{t.suggestGenericNote}</div>
+                {suggestions[id].items.map((s, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: 6, padding: "8px 10px" }}>
+                    <span style={{ flex: 1, fontSize: 12.5, color: THEME.text }}>{s}</span>
+                    <button
+                      type="button"
+                      onClick={() => setItems([...items, s])}
+                      style={{ ...btnIcon, background: THEME.primary, color: "#fff", borderRadius: 6, padding: "5px 10px", fontSize: 11.5, fontWeight: 700, whiteSpace: "nowrap" }}
+                      title={t.suggestUse}
+                    >
+                      <Plus size={13} /> {t.suggestUse}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -983,10 +1055,31 @@ export default function AtsCvBuilder({ accessCode }) {
     );
   }
 
-  function goToPreview() {
+  // Purely informational — every one of these is a legitimate thing to
+  // leave blank (a fresh graduate has no experience, many CVs skip
+  // certifications), so this only ever nudges, never blocks proceeding.
+  function getEmptySections() {
+    const missing = [];
+    if (!experiences.some((x) => (x.title || "").trim() || (x.employer || "").trim())) missing.push(t.experience);
+    if (!education.some((x) => x.schoolChoice || x.schoolCustom?.trim() || x.degreeChoice)) missing.push(t.education);
+    if (techSkillTags.length === 0 && softSkillTags.length === 0) missing.push(t.skills);
+    if (!achievements.some((a) => a.trim())) missing.push(t.achievements);
+    return missing;
+  }
+
+  function proceedToPreview() {
+    setShowMissingSectionModal(false);
     setPreview(true);
     if (!aiSummaryGenerated) generateAiSummary();
     if (!itemsEnhanced) generateAiEnhancements();
+  }
+
+  function goToPreview() {
+    if (getEmptySections().length > 0) {
+      setShowMissingSectionModal(true);
+      return;
+    }
+    proceedToPreview();
   }
 
   // ─────────────────── LANGUAGE (chosen first) ───────────────────
@@ -1271,6 +1364,10 @@ export default function AtsCvBuilder({ accessCode }) {
           لغة السيرة الذاتية الناتجة: <strong style={{ color: THEME.primary }}>{cvLang === "en" ? "English" : "العربية"}</strong>
         </div>
 
+        {cvLang === "en" && (
+          <div style={{ ...noteBannerStyle, marginBottom: 18 }}>{t.arabicAllowedNote}</div>
+        )}
+
         {/* Stepper */}
         <div style={{ display: "flex", gap: 6, marginBottom: 24, flexWrap: "wrap" }}>
           {STEPS.map((s, i) => {
@@ -1384,7 +1481,19 @@ export default function AtsCvBuilder({ accessCode }) {
                     {L.currentJob}
                   </label>
 
-                  {listInput(`exp-${i}-bullets`, L.bulletsLabel, x.bullets, (items) => setExp(i, "bullets")({ target: { value: items } }), { ph: L.bulletsPh, addLabel: L.addBulletPoint, hint: L.bulletsHint })}
+                  {listInput(`exp-${i}-bullets`, L.bulletsLabel, x.bullets, (items) => setExp(i, "bullets")({ target: { value: items } }), {
+                    ph: L.bulletsPh, addLabel: L.addBulletPoint, hint: L.bulletsHint,
+                    suggest: {
+                      kind: "bullets",
+                      context: {
+                        jobTitle: x.title || "",
+                        employer: x.employer || "",
+                        yearsOfExperience: form.yearsOfExperience || "",
+                        specialization: (education[0]?.specializationChoice === OTHER ? education[0]?.specializationCustom : education[0]?.specializationChoice) || "",
+                        targetRole: targetRoles.join(sep),
+                      },
+                    },
+                  })}
                 </div>
               ))}
               <button onClick={addExp} style={btnAdd}><Plus size={16} /> {L.addExp}</button>
@@ -1473,7 +1582,18 @@ export default function AtsCvBuilder({ accessCode }) {
 
               {/* Achievements */}
               <div style={{ marginBottom: 24 }}>
-                {listInput("achievements", L.achievementsHeading, achievements, setAchievements, { ph: L.achievementsPh, addLabel: L.addAchievement, hint: L.achievementsHint })}
+                {listInput("achievements", L.achievementsHeading, achievements, setAchievements, {
+                  ph: L.achievementsPh, addLabel: L.addAchievement, hint: L.achievementsHint,
+                  suggest: {
+                    kind: "achievements",
+                    context: {
+                      jobTitle: cvHeadline || "",
+                      yearsOfExperience: form.yearsOfExperience || "",
+                      specialization: (education[0]?.specializationChoice === OTHER ? education[0]?.specializationCustom : education[0]?.specializationChoice) || "",
+                      targetRole: targetRoles.join(sep),
+                    },
+                  },
+                })}
               </div>
 
               {/* Training Courses */}
@@ -1564,6 +1684,31 @@ export default function AtsCvBuilder({ accessCode }) {
           بياناتك تُستخدَم فقط لتوليد ملف PDF عند الضغط على "تحميل PDF"، ولا تُحفظ على أي خادم.
         </div>
       </div>
+
+      {showMissingSectionModal && (
+        <div
+          role="presentation"
+          onClick={() => setShowMissingSectionModal(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 100 }}
+        >
+          <div
+            dir={cvDir}
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: 430, background: THEME.card, borderRadius: 14, padding: 26, boxShadow: "0 12px 40px rgba(18,41,63,.4)" }}
+          >
+            <div style={{ fontSize: 17.5, fontWeight: 800, color: THEME.primary, marginBottom: 12 }}>{t.missingSectionTitle}</div>
+            <div style={{ fontSize: 13.5, color: THEME.text, lineHeight: 1.95, marginBottom: 18 }}>
+              {t.missingSectionBody(getEmptySections().join(sep))}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button onClick={proceedToPreview} style={{ ...btnPrimary, width: "100%" }}>{t.missingSectionContinue}</button>
+              <button onClick={() => setShowMissingSectionModal(false)} style={{ ...btnGhost, width: "100%", justifyContent: "center" }}>{t.missingSectionBack}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1619,6 +1764,8 @@ const chipStyle = { display: "inline-flex", alignItems: "center", gap: 6, backgr
 const chipRemoveStyle = { background: "transparent", border: "none", cursor: "pointer", color: "#1a3a5c", fontSize: 14, lineHeight: 1, padding: 0, fontWeight: 700 };
 const dropdownListStyle = { position: "absolute", top: "100%", insetInlineStart: 0, insetInlineEnd: 0, marginTop: 4, background: "#ffffff", border: "1px solid #dde4ec", borderRadius: 8, boxShadow: "0 4px 16px rgba(20,40,60,.12)", maxHeight: 220, overflowY: "auto", zIndex: 20 };
 const dropdownItemStyle = { padding: "9px 12px", fontSize: 13, color: "#3a4a5a", cursor: "pointer", borderBottom: "1px solid #f0f2f5" };
+const noteBannerStyle = { background: "#e8eef4", border: "1px dashed #dde4ec", borderRadius: 8, padding: "10px 14px", fontSize: 12.5, color: "#3a4a5a", textAlign: "center", lineHeight: 1.7 };
+const suggestBtnStyle = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#1a3a5c", border: "1px solid #dde4ec", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginTop: 6 };
 
 const cvPage = { width: "210mm", minHeight: "297mm", background: "#ffffff", padding: "18mm 16mm", boxShadow: "0 2px 16px rgba(20,40,60,.12)", boxSizing: "border-box" };
 const pBody = { margin: 0, fontSize: 13, lineHeight: 1.85, color: "#333333", textAlign: "justify" };

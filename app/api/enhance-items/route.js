@@ -15,6 +15,7 @@ Rules:
 - Rephrase and elevate ONLY what is written. Do NOT invent numbers, metrics, tools, companies, or any facts not present.
 - Keep each to roughly one line, concise and professional.
 - Preserve the original meaning exactly.
+- Every output line MUST be entirely in ${languageName}, even if the corresponding input entry was written in a different language (e.g. Arabic text submitted for an English CV, or vice versa) — translate it faithfully into ${languageName} before polishing it, never leave it in the original language.
 - Return the results in the same order, one per line, no numbering, no headings, no preamble.`;
 }
 

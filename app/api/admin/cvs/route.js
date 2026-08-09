@@ -17,14 +17,14 @@ export async function GET(request) {
       statusFilter && isValidSendingStatus(statusFilter)
         ? await sql`
             SELECT id, code, salla_order_number, applicant_name, applicant_email, applicant_phone,
-                   applicant_city, applicant_target_role, pdf_language, sending_status, generated_at
+                   applicant_city, applicant_target_role, requested_package, pdf_language, sending_status, generated_at
             FROM access_codes
             WHERE pdf_url IS NOT NULL AND sending_status = ${statusFilter}
             ORDER BY generated_at DESC
           `
         : await sql`
             SELECT id, code, salla_order_number, applicant_name, applicant_email, applicant_phone,
-                   applicant_city, applicant_target_role, pdf_language, sending_status, generated_at
+                   applicant_city, applicant_target_role, requested_package, pdf_language, sending_status, generated_at
             FROM access_codes
             WHERE pdf_url IS NOT NULL
             ORDER BY generated_at DESC

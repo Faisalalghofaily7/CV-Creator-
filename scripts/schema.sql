@@ -40,6 +40,12 @@ ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS sending_status TEXT NOT NULL D
 -- paying customer out of a code that was never actually used.
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS salla_order_status TEXT;
 
+-- Requested service/package, captured when an admin manually generates a
+-- code (optional — webhook-generated codes don't set this, since Salla's
+-- payload doesn't carry a package selection). Free text rather than a CHECK
+-- constraint so the admin UI's dropdown options can change without a migration.
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS requested_package TEXT;
+
 -- Timestamped audit trail of every sending-status change, so staff can see
 -- when a record moved between states and (best-effort) who changed it —
 -- there's currently a single shared admin login, not per-admin accounts, so
