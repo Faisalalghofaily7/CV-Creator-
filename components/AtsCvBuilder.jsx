@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Award, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon, Layers } from "lucide-react";
 import { CV_LABELS } from "../lib/cvLabels";
 
@@ -198,6 +198,13 @@ export default function AtsCvBuilder({ accessCode }) {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportCompleted, setExportCompleted] = useState(false);
   const [exportError, setExportError] = useState("");
+  // AI-generated professional summary: only auto-generated once per session
+  // (aiSummaryGenerated guards against silently overwriting a manual edit
+  // the next time the user revisits the preview).
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const [aiSummaryError, setAiSummaryError] = useState("");
+  const [aiSummaryGenerated, setAiSummaryGenerated] = useState(saved?.aiSummaryGenerated ?? false);
+  const summaryTextareaRef = useRef(null);
   // Shared UI state for every searchable dropdown / skill-suggestion list
   // on the form — only one can be open at a time, keyed by field id.
   const [openDropdown, setOpenDropdown] = useState(null);
@@ -500,12 +507,22 @@ export default function AtsCvBuilder({ accessCode }) {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed,
         form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries,
-        courses, achievements, certifications,
+        courses, achievements, certifications, aiSummaryGenerated,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, aiSummaryGenerated]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  // Auto-grows the editable summary textarea to fit its content — needs to
+  // re-run whenever the text changes programmatically (AI result landing,
+  // restoring from a saved session), not just on user keystrokes.
+  useEffect(() => {
+    const el = summaryTextareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [form.summary, aiSummaryLoading, preview]);
 
   // ── Experience helpers ──
   const addExp = () => setExperiences([...experiences, { title: "", employer: "", fromMonth: "", fromYear: "", toMonth: "", toYear: "", current: false, bullets: [] }]);
@@ -792,6 +809,42 @@ export default function AtsCvBuilder({ accessCode }) {
     }
   }
 
+  // Fire-and-forget: called once when the user first reaches the preview.
+  // Never overwrites a summary the user already generated/edited this
+  // session — aiSummaryGenerated is the guard for that.
+  async function generateAiSummary() {
+    setAiSummaryLoading(true);
+    setAiSummaryError("");
+    try {
+      const res = await fetch("/api/generate-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lang: cvLang,
+          targetRoles: targetRoles.join(sep),
+          yearsOfExperience: form.yearsOfExperience,
+          experiences: displayExperiences,
+          education: displayEducation,
+          techSkills: techSkillsStr,
+          softSkills: softSkillsStr,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.summary) throw new Error(data.error || "AI summary generation failed");
+      setForm((f) => ({ ...f, summary: data.summary }));
+    } catch {
+      setAiSummaryError(t.summaryGenerateError);
+    } finally {
+      setAiSummaryLoading(false);
+      setAiSummaryGenerated(true);
+    }
+  }
+
+  function goToPreview() {
+    setPreview(true);
+    if (!aiSummaryGenerated) generateAiSummary();
+  }
+
   // ─────────────────── LANGUAGE (chosen first) ───────────────────
   if (!langConfirmed) {
     return (
@@ -920,9 +973,30 @@ export default function AtsCvBuilder({ accessCode }) {
               )}
             </div>
 
-            {form.summary && (
+            {(aiSummaryLoading || form.summary || aiSummaryGenerated) && (
               <Section title={t.summary}>
-                <p style={pBody}>{form.summary}</p>
+                {aiSummaryLoading ? (
+                  <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: C.slate }}>
+                    <Loader2 size={14} className="spin" /> {t.summaryGenerating}
+                  </div>
+                ) : (
+                  <>
+                    {aiSummaryError && (
+                      <div className="no-print" style={{ ...warnStyle, marginBottom: 6 }}>{aiSummaryError}</div>
+                    )}
+                    <textarea
+                      ref={summaryTextareaRef}
+                      value={form.summary}
+                      onChange={(e) => setForm((f) => ({ ...f, summary: e.target.value }))}
+                      placeholder={t.summaryPlaceholder}
+                      rows={1}
+                      style={{ ...pBody, width: "100%", border: "1px dashed transparent", borderRadius: 4, padding: 2, resize: "none", overflow: "hidden", fontFamily: "inherit", background: "transparent" }}
+                      onFocus={(e) => { e.target.style.borderColor = THEME.border; }}
+                      onBlur={(e) => { e.target.style.borderColor = "transparent"; }}
+                    />
+                    <div className="no-print" style={{ fontSize: 10.5, color: C.slate, marginTop: 3 }}>{t.summaryEditHint}</div>
+                  </>
+                )}
               </Section>
             )}
 
@@ -1090,7 +1164,12 @@ export default function AtsCvBuilder({ accessCode }) {
               {useAltCvPhone && field("displayPhone", L.altPhoneLabel, form.displayPhone, set("displayPhone"), { ph: "+9665xxxxxxxx", hint: "يظهر في السيرة الذاتية بدلاً من رقم الجوال أعلاه." })}
 
               {tagsInput("targetRoles", `${L.targetRolesLabel} *`, targetRoles, setTargetRoles, { ph: L.targetRolesPh, hint: L.targetRolesHint, suggestions: roleOptions })}
-              {fieldArea("summary", "الملخص المهني", form.summary, set("summary"), { rows: 4, ph: "اكتب 2-3 أسطر عن خبرتك ونقاط قوتك موجّهة للوظيفة المستهدفة.", hint: "اختياري — لكنه أول ما يقرأه صاحب العمل." })}
+              <div style={{ marginBottom: 14 }}>
+                <label style={labelStyle}>{t.summary}</label>
+                <div style={{ background: THEME.soft, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "12px 14px", fontSize: 13, color: THEME.text, lineHeight: 1.8 }}>
+                  {t.summaryAiNote}
+                </div>
+              </div>
             </>
           )}
 
@@ -1310,7 +1389,7 @@ export default function AtsCvBuilder({ accessCode }) {
                 التالي <ChevronLeft size={17} />
               </button>
             ) : (
-              <button onClick={() => setPreview(true)} style={{ ...btnPrimary, minWidth: 200 }}>
+              <button onClick={goToPreview} style={{ ...btnPrimary, minWidth: 200 }}>
                 <FileText size={17} /> معاينة السيرة الذاتية
               </button>
             )}
