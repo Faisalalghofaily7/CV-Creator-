@@ -5,6 +5,12 @@ import { createAccessCode, findAccessCodeBySallaOrder } from "../../../lib/acces
 
 export const runtime = "nodejs";
 
+// Salla's stable, machine-readable slug for "تحت المراجعة" / "under
+// review" — the first real stage after an order is placed. Display names
+// (Arabic label, "customized" overrides) vary and are merchant-editable,
+// so the slug is the only reliable thing to match on.
+const UNDER_REVIEW_SLUG = "under_review";
+
 function timingSafeEqualStrings(a, b) {
   const bufA = Buffer.from(a || "", "utf8");
   const bufB = Buffer.from(b || "", "utf8");
@@ -40,15 +46,43 @@ function verifySallaWebhook(request, rawBody) {
   return false;
 }
 
-// order.created's customer fields live directly under data.customer —
-// mobile is a bare number (no leading "0", no country code) so it has to
-// be combined with mobile_code to be a usable phone number.
-function extractOrderCreatedFields(data) {
-  const customer = data.customer || {};
+// mobile is a bare number (no leading "0", no country code) in both
+// order.created's data.customer and order.status.updated's data.order.customer
+// — has to be combined with mobile_code to be a usable phone number.
+function extractCustomerFields(customer = {}) {
   const applicantName = [customer.first_name, customer.last_name].filter(Boolean).join(" ").trim() || null;
   const applicantPhone = customer.mobile ? `${customer.mobile_code || ""}${customer.mobile}` : null;
-  const sallaOrderNumber = data.reference_id != null ? String(data.reference_id) : data.id != null ? String(data.id) : null;
-  return { sallaOrderNumber, applicantName, applicantEmail: customer.email || null, applicantPhone };
+  return { applicantName, applicantEmail: customer.email || null, applicantPhone };
+}
+
+/**
+ * The single place code generation happens, regardless of which event
+ * delivered the "under_review" status (an order can already be under
+ * review in its very first order.created delivery, or reach it later via
+ * order.status.updated). Idempotent: one order never gets a second code,
+ * whether from a genuine re-review or a redelivered/duplicate event.
+ */
+async function generateCodeIfUnderReview({ sallaOrderNumber, statusSlug, customer }) {
+  if (statusSlug !== UNDER_REVIEW_SLUG || !sallaOrderNumber) {
+    return { generated: false };
+  }
+
+  const existing = await findAccessCodeBySallaOrder(sallaOrderNumber);
+  if (existing) {
+    console.log(`[salla-webhook] order ${sallaOrderNumber} already has code ${existing.code} — skipping (already generated).`);
+    return { generated: false, code: existing.code };
+  }
+
+  const { applicantName, applicantEmail, applicantPhone } = extractCustomerFields(customer);
+  const row = await createAccessCode({
+    sallaOrderNumber,
+    applicantName,
+    applicantEmail,
+    applicantPhone,
+    sallaOrderStatus: statusSlug,
+  });
+  console.log(`[salla-webhook] order ${sallaOrderNumber} reached under_review — generated code ${row.code} (phone: ${applicantPhone || "—"})`);
+  return { generated: true, code: row.code };
 }
 
 export async function POST(request) {
@@ -76,24 +110,22 @@ export async function POST(request) {
   try {
     if (event === "order.created") {
       const data = payload.data || {};
-      const { sallaOrderNumber, applicantName, applicantEmail, applicantPhone } = extractOrderCreatedFields(data);
+      const sallaOrderNumber = data.reference_id != null ? String(data.reference_id) : data.id != null ? String(data.id) : null;
+      const statusSlug = data.status?.slug || null;
 
       if (!sallaOrderNumber) {
         console.warn("[salla-webhook] order.created has no reference_id/id — skipping.");
         return NextResponse.json({ ok: true, skipped: true });
       }
 
-      // Salla redelivers on a non-2xx response and can send duplicates
-      // outright — never create a second code for the same order.
-      const existing = await findAccessCodeBySallaOrder(sallaOrderNumber);
-      if (existing) {
-        console.log(`[salla-webhook] order ${sallaOrderNumber} already has code ${existing.code} — duplicate delivery, skipping.`);
-        return NextResponse.json({ ok: true, code: existing.code, duplicate: true });
-      }
+      const result = await generateCodeIfUnderReview({ sallaOrderNumber, statusSlug, customer: data.customer });
+      if (result.generated) return NextResponse.json({ ok: true, code: result.code });
+      if (result.code) return NextResponse.json({ ok: true, code: result.code, duplicate: true });
 
-      const row = await createAccessCode({ sallaOrderNumber, applicantName, applicantEmail, applicantPhone });
-      console.log(`[salla-webhook] created code ${row.code} for Salla order ${sallaOrderNumber}`);
-      return NextResponse.json({ ok: true, code: row.code });
+      // A brand-new order not yet under review (e.g. still payment_pending)
+      // — nothing to do until a later order.status.updated reaches it.
+      console.log(`[salla-webhook] order ${sallaOrderNumber} created with status "${statusSlug}" — not under_review yet, no code generated.`);
+      return NextResponse.json({ ok: true, skipped: true });
     }
 
     if (event === "order.status.updated") {
@@ -109,10 +141,17 @@ export async function POST(request) {
         return NextResponse.json({ ok: true, skipped: true });
       }
 
+      const result = await generateCodeIfUnderReview({ sallaOrderNumber, statusSlug, customer: order.customer });
+      if (result.generated) {
+        return NextResponse.json({ ok: true, code: result.code });
+      }
+
+      // Not a fresh under_review generation (already had a code, or this
+      // particular status isn't under_review) — keep the informational
+      // status column current either way. Never touches `status` (code
+      // redemption) or `sending_status` (staff CV-sending progress), which
+      // mean something entirely different from Salla's order lifecycle.
       const sql = getSql();
-      // Informational only — does not touch `status` (code redemption) or
-      // `sending_status` (staff CV-sending progress), which mean something
-      // entirely different and must never be driven by Salla's order state.
       const [updated] = await sql`
         UPDATE access_codes
         SET salla_order_status = ${statusSlug}
