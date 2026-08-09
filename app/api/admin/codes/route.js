@@ -12,7 +12,7 @@ export async function GET(request) {
   try {
     const sql = getSql();
     const rows = await sql`
-      SELECT id, code, salla_order_number, applicant_phone, requested_package, status, created_at, used_at
+      SELECT id, code, salla_order_number, applicant_name, applicant_phone, requested_package, status, created_at, used_at
       FROM access_codes
       ORDER BY created_at DESC
     `;
@@ -31,6 +31,7 @@ export async function POST(request) {
     const body = await request.json().catch(() => ({}));
     const sallaOrderNumber = typeof body.sallaOrderNumber === "string" ? body.sallaOrderNumber.trim() : "";
     const applicantPhone = typeof body.applicantPhone === "string" ? body.applicantPhone.trim() : "";
+    const applicantName = typeof body.applicantName === "string" ? body.applicantName.trim() : "";
     const requestedPackage = typeof body.requestedPackage === "string" ? body.requestedPackage.trim() || null : null;
 
     if (!sallaOrderNumber) {
@@ -39,8 +40,11 @@ export async function POST(request) {
     if (!applicantPhone) {
       return NextResponse.json({ error: "رقم جوال العميل مطلوب لتوليد الكود." }, { status: 400 });
     }
+    if (!applicantName) {
+      return NextResponse.json({ error: "اسم العميل مطلوب لتوليد الكود." }, { status: 400 });
+    }
 
-    const row = await createAccessCode({ sallaOrderNumber, applicantPhone, requestedPackage });
+    const row = await createAccessCode({ sallaOrderNumber, applicantPhone, applicantName, requestedPackage });
     return NextResponse.json({ code: row });
   } catch (err) {
     console.error("Failed to create access code:", err);

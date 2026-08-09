@@ -37,6 +37,7 @@ export default function AdminCodes({ role }) {
   const [copiedCode, setCopiedCode] = useState("");
   const [newOrderNumber, setNewOrderNumber] = useState("");
   const [newPhone, setNewPhone] = useState("");
+  const [newName, setNewName] = useState("");
   const [newPackage, setNewPackage] = useState("");
 
   const [cvs, setCvs] = useState([]);
@@ -101,11 +102,11 @@ export default function AdminCodes({ role }) {
     }
   }
 
-  const canGenerate = newOrderNumber.trim() !== "" && newPhone.trim() !== "";
+  const canGenerate = newOrderNumber.trim() !== "" && newPhone.trim() !== "" && newName.trim() !== "";
 
   async function handleGenerate() {
     if (!canGenerate) {
-      setGenerateError("رقم طلب سلة ورقم الجوال مطلوبان لتوليد الكود.");
+      setGenerateError("رقم طلب سلة ورقم الجوال واسم العميل مطلوبة لتوليد الكود.");
       return;
     }
     setGenerating(true);
@@ -114,7 +115,7 @@ export default function AdminCodes({ role }) {
       const res = await fetch("/api/admin/codes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sallaOrderNumber: newOrderNumber.trim(), applicantPhone: newPhone.trim(), requestedPackage: newPackage || null }),
+        body: JSON.stringify({ sallaOrderNumber: newOrderNumber.trim(), applicantPhone: newPhone.trim(), applicantName: newName.trim(), requestedPackage: newPackage || null }),
       });
       if (res.status === 401) return redirectToLogin();
       const data = await res.json().catch(() => ({}));
@@ -123,6 +124,7 @@ export default function AdminCodes({ role }) {
       setCodes((prev) => [data.code, ...prev]);
       setNewOrderNumber("");
       setNewPhone("");
+      setNewName("");
       setNewPackage("");
     } catch (err) {
       setGenerateError(err.message || "تعذّر إنشاء الكود.");
@@ -247,6 +249,10 @@ export default function AdminCodes({ role }) {
         <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 14 }}>
             <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 700, color: C.slate }}>
+              اسم العميل *
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="مثال: عبدالله الفلاني" style={inputStyle} />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 700, color: C.slate }}>
               رقم طلب سلة *
               <input value={newOrderNumber} onChange={(e) => setNewOrderNumber(e.target.value)} placeholder="مثال: 10234" style={inputStyle} />
             </label>
@@ -286,6 +292,7 @@ export default function AdminCodes({ role }) {
               <tr style={{ background: C.soft }}>
                 <th style={thStyle}>الكود</th>
                 <th style={thStyle}>الحالة</th>
+                <th style={thStyle}>اسم العميل</th>
                 <th style={thStyle}>رقم طلب سلة</th>
                 <th style={thStyle}>رقم الجوال</th>
                 <th style={thStyle}>الخدمة المطلوبة</th>
@@ -294,11 +301,11 @@ export default function AdminCodes({ role }) {
             </thead>
             <tbody>
               {loadingCodes ? (
-                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
+                <tr><td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
               ) : loadError ? (
-                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{loadError}</td></tr>
+                <tr><td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{loadError}</td></tr>
               ) : codes.length === 0 ? (
-                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد أكواد بعد — اضغط "توليد كود جديد"</td></tr>
+                <tr><td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد أكواد بعد — اضغط "توليد كود جديد"</td></tr>
               ) : (
                 codes.map((c) => (
                   <tr key={c.id} style={{ borderTop: `1px solid ${C.line}` }}>
@@ -311,6 +318,7 @@ export default function AdminCodes({ role }) {
                     <td style={tdStyle}>
                       <span style={c.status === "used" ? statusBadgeUsed : statusBadge}>{c.status === "used" ? "مستخدم" : "متاح"}</span>
                     </td>
+                    <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_name || "—"}</td>
                     <td style={tdStyle}>
                       <input
                         defaultValue={c.salla_order_number || ""}

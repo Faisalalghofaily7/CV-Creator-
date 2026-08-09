@@ -8,23 +8,23 @@ export async function POST(request) {
   try {
     const body = await request.json().catch(() => ({}));
     const code = typeof body.code === "string" ? body.code.trim() : "";
-    const sallaOrderNumber = typeof body.sallaOrderNumber === "string" ? body.sallaOrderNumber.trim() : "";
 
-    if (!code || !sallaOrderNumber) {
-      return NextResponse.json({ error: "الرجاء إدخال الكود ورقم الطلب." }, { status: 400 });
+    if (!code) {
+      return NextResponse.json({ error: "الرجاء إدخال الكود." }, { status: 400 });
     }
 
     const sql = getSql();
-    // Validates the code and records the order number, but does NOT
-    // consume it — the code stays 'available' until a PDF is actually
-    // exported successfully (see /api/generate-pdf), so refreshing the
-    // page or backing out before exporting never costs the user their
-    // single-use code.
+    // Just validates the code — it's already linked to its Salla order
+    // (set at admin-generation or by the Salla webhook), so there's
+    // nothing left for the user to submit here. Does NOT consume the
+    // code — it stays 'available' until a PDF is actually exported
+    // successfully (see /api/generate-pdf), so refreshing the page or
+    // backing out before exporting never costs the user their single-use
+    // code.
     const [row] = await sql`
-      UPDATE access_codes
-      SET salla_order_number = ${sallaOrderNumber}
+      SELECT id
+      FROM access_codes
       WHERE code = ${code} AND status = 'available'
-      RETURNING id
     `;
 
     if (!row) {

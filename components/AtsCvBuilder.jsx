@@ -228,10 +228,12 @@ export default function AtsCvBuilder({ accessCode }) {
   // on the form — only one can be open at a time, keyed by field id.
   const [openDropdown, setOpenDropdown] = useState(null);
   const [dropdownQuery, setDropdownQuery] = useState({});
-  // Non-blocking pre-preview check: shown once when the applicant hits
-  // "Preview" with an obviously empty core section — purely a nudge, never
-  // prevents proceeding (see missingSectionModal below).
-  const [showMissingSectionModal, setShowMissingSectionModal] = useState(false);
+  // Non-blocking per-section check: shown when the applicant clicks "Next"
+  // off a section that's still empty — purely a nudge, never prevents
+  // proceeding (see goToNextStep / the section-warning modal below).
+  const [showSectionWarningModal, setShowSectionWarningModal] = useState(false);
+  const [sectionWarningLabel, setSectionWarningLabel] = useState("");
+  const [pendingStepAdvance, setPendingStepAdvance] = useState(null);
   // "Suggest for me" AI helper for points-style fields (experience bullets,
   // achievements) — purely optional, never replaces manual typing. Keyed by
   // the same field id as the list itself, holding whatever suggestions were
@@ -1058,28 +1060,32 @@ export default function AtsCvBuilder({ accessCode }) {
   // Purely informational — every one of these is a legitimate thing to
   // leave blank (a fresh graduate has no experience, many CVs skip
   // certifications), so this only ever nudges, never blocks proceeding.
-  function getEmptySections() {
-    const missing = [];
-    if (!experiences.some((x) => (x.title || "").trim() || (x.employer || "").trim())) missing.push(t.experience);
-    if (!education.some((x) => x.schoolChoice || x.schoolCustom?.trim() || x.degreeChoice)) missing.push(t.education);
-    if (techSkillTags.length === 0 && softSkillTags.length === 0) missing.push(t.skills);
-    if (!achievements.some((a) => a.trim())) missing.push(t.achievements);
-    return missing;
+  // Checked one section at a time, right when the applicant leaves that
+  // section (see goToNextStep) — not lumped together before the preview.
+  function sectionEmptyLabel(stepIndex) {
+    if (stepIndex === 1) return !experiences.some((x) => (x.title || "").trim() || (x.employer || "").trim()) ? t.experience : null;
+    if (stepIndex === 2) return !education.some((x) => x.schoolChoice || x.schoolCustom?.trim() || x.degreeChoice) ? t.education : null;
+    if (stepIndex === 3) return techSkillTags.length === 0 && softSkillTags.length === 0 ? t.skills : null;
+    if (stepIndex === 4) return !achievements.some((a) => a.trim()) ? t.achievements : null;
+    return null;
+  }
+
+  function goToNextStep() {
+    if (!canProceed()) return;
+    const label = sectionEmptyLabel(step);
+    if (label) {
+      setSectionWarningLabel(label);
+      setPendingStepAdvance(step + 1);
+      setShowSectionWarningModal(true);
+      return;
+    }
+    setStep(step + 1);
   }
 
   function proceedToPreview() {
-    setShowMissingSectionModal(false);
     setPreview(true);
     if (!aiSummaryGenerated) generateAiSummary();
     if (!itemsEnhanced) generateAiEnhancements();
-  }
-
-  function goToPreview() {
-    if (getEmptySections().length > 0) {
-      setShowMissingSectionModal(true);
-      return;
-    }
-    proceedToPreview();
   }
 
   // ─────────────────── LANGUAGE (chosen first) ───────────────────
@@ -1660,11 +1666,11 @@ export default function AtsCvBuilder({ accessCode }) {
               <ChevronRight size={17} /> السابق
             </button>
             {step < STEPS.length - 1 ? (
-              <button onClick={() => canProceed() && setStep(step + 1)} disabled={!canProceed()} style={{ ...btnPrimary, opacity: canProceed() ? 1 : 0.5, cursor: canProceed() ? "pointer" : "not-allowed" }}>
+              <button onClick={goToNextStep} disabled={!canProceed()} style={{ ...btnPrimary, opacity: canProceed() ? 1 : 0.5, cursor: canProceed() ? "pointer" : "not-allowed" }}>
                 التالي <ChevronLeft size={17} />
               </button>
             ) : (
-              <button onClick={goToPreview} style={{ ...btnPrimary, minWidth: 200 }}>
+              <button onClick={proceedToPreview} style={{ ...btnPrimary, minWidth: 200 }}>
                 <FileText size={17} /> معاينة السيرة الذاتية
               </button>
             )}
@@ -1685,10 +1691,10 @@ export default function AtsCvBuilder({ accessCode }) {
         </div>
       </div>
 
-      {showMissingSectionModal && (
+      {showSectionWarningModal && (
         <div
           role="presentation"
-          onClick={() => setShowMissingSectionModal(false)}
+          onClick={() => setShowSectionWarningModal(false)}
           style={{ position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 100 }}
         >
           <div
@@ -1700,11 +1706,16 @@ export default function AtsCvBuilder({ accessCode }) {
           >
             <div style={{ fontSize: 17.5, fontWeight: 800, color: THEME.primary, marginBottom: 12 }}>{t.missingSectionTitle}</div>
             <div style={{ fontSize: 13.5, color: THEME.text, lineHeight: 1.95, marginBottom: 18 }}>
-              {t.missingSectionBody(getEmptySections().join(sep))}
+              {t.missingSectionBody(sectionWarningLabel)}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <button onClick={proceedToPreview} style={{ ...btnPrimary, width: "100%" }}>{t.missingSectionContinue}</button>
-              <button onClick={() => setShowMissingSectionModal(false)} style={{ ...btnGhost, width: "100%", justifyContent: "center" }}>{t.missingSectionBack}</button>
+              <button
+                onClick={() => { setShowSectionWarningModal(false); if (pendingStepAdvance != null) setStep(pendingStepAdvance); }}
+                style={{ ...btnPrimary, width: "100%" }}
+              >
+                {t.missingSectionContinue}
+              </button>
+              <button onClick={() => setShowSectionWarningModal(false)} style={{ ...btnGhost, width: "100%", justifyContent: "center" }}>{t.missingSectionBack}</button>
             </div>
           </div>
         </div>

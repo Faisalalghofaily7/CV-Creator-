@@ -7,14 +7,13 @@ const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4
 
 export default function AccessGate({ onContinue }) {
   const [code, setCode] = useState("");
-  const [orderNumber, setOrderNumber] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!code.trim() || !orderNumber.trim()) {
-      alert("الرجاء إدخال الكود ورقم الطلب.");
+    if (!code.trim()) {
+      alert("الرجاء إدخال الكود.");
       return;
     }
     setSubmitting(true);
@@ -23,7 +22,7 @@ export default function AccessGate({ onContinue }) {
       const res = await fetch("/api/access/redeem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: code.trim(), sallaOrderNumber: orderNumber.trim() }),
+        body: JSON.stringify({ code: code.trim() }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -47,13 +46,10 @@ export default function AccessGate({ onContinue }) {
           </div>
           <div style={{ fontSize: 18, fontWeight: 700, color: C.ink }}>الدخول إلى منشئ السيرة الذاتية</div>
         </div>
-        <div style={{ fontSize: 12.5, color: C.slate, marginBottom: 20 }}>أدخل الكود المُرسَل إليك ورقم طلبك في سلة للمتابعة.</div>
+        <div style={{ fontSize: 12.5, color: C.slate, marginBottom: 20 }}>أدخل الكود المُرسَل إليك للمتابعة.</div>
 
         <label style={labelStyle}>كود الدخول</label>
         <input value={code} onChange={(e) => setCode(e.target.value)} style={inputStyle} placeholder="CV-XXXX-XXXX" />
-
-        <label style={{ ...labelStyle, marginTop: 14 }}>رقم طلب سلة</label>
-        <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} style={inputStyle} placeholder="مثال: 10234" />
 
         {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#b3261e", fontWeight: 600 }}>{error}</div>}
 
