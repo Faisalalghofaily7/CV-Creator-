@@ -188,3 +188,17 @@ export async function POST(request) {
     return NextResponse.json({ error: "internal error" }, { status: 500 });
   }
 }
+
+// Some webhook providers (Salla included, apparently) ping the URL with a
+// GET/HEAD request to check it's alive before or alongside sending real
+// POST deliveries — unauthenticated on purpose, since it carries no event
+// data to verify against a secret. Answering it (instead of the default
+// 405 from only exporting POST) avoids the endpoint being treated as
+// unreachable by whatever's doing that check.
+export async function GET() {
+  return NextResponse.json({ ok: true });
+}
+
+export async function HEAD() {
+  return new NextResponse(null, { status: 200 });
+}
