@@ -204,7 +204,20 @@ export default function AtsCvBuilder({ accessCode }) {
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [aiSummaryError, setAiSummaryError] = useState("");
   const [aiSummaryGenerated, setAiSummaryGenerated] = useState(saved?.aiSummaryGenerated ?? false);
-  const summaryTextareaRef = useRef(null);
+  // AI-enhanced experience bullets / achievements / graduation projects.
+  // Keyed by a stable item key (e.g. "exp-0-bullet-1", "achievement-2",
+  // "eduGradProject-0"). Each entry holds both the original user text and
+  // the AI version so the preview's original/AI toggle is lossless, plus
+  // `current` (whichever the CV should actually use) and `edited` (guards
+  // a manual edit made while the AI call is still in flight from being
+  // clobbered when the response lands).
+  const [aiItemsLoading, setAiItemsLoading] = useState(false);
+  const [aiItemsError, setAiItemsError] = useState("");
+  const [itemsEnhanced, setItemsEnhanced] = useState(saved?.itemsEnhanced ?? false);
+  const [enhancedItems, setEnhancedItems] = useState(saved?.enhancedItems ?? {});
+  // Which items currently have their "original text" panel expanded —
+  // purely ephemeral UI state, not persisted.
+  const [originalToggles, setOriginalToggles] = useState({});
   // Shared UI state for every searchable dropdown / skill-suggestion list
   // on the form — only one can be open at a time, keyed by field id.
   const [openDropdown, setOpenDropdown] = useState(null);
@@ -507,22 +520,12 @@ export default function AtsCvBuilder({ accessCode }) {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed,
         form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries,
-        courses, achievements, certifications, aiSummaryGenerated,
+        courses, achievements, certifications, aiSummaryGenerated, itemsEnhanced, enhancedItems,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, aiSummaryGenerated]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, aiSummaryGenerated, itemsEnhanced, enhancedItems]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-
-  // Auto-grows the editable summary textarea to fit its content — needs to
-  // re-run whenever the text changes programmatically (AI result landing,
-  // restoring from a saved session), not just on user keystrokes.
-  useEffect(() => {
-    const el = summaryTextareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [form.summary, aiSummaryLoading, preview]);
 
   // ── Experience helpers ──
   const addExp = () => setExperiences([...experiences, { title: "", employer: "", fromMonth: "", fromYear: "", toMonth: "", toYear: "", current: false, bullets: [] }]);
@@ -576,8 +579,6 @@ export default function AtsCvBuilder({ accessCode }) {
     if (step === 2) return education.every((x) => x.schoolChoice !== OTHER || x.schoolCustom.trim());
     return true;
   };
-
-  const splitLines = (t) => t.split("\n").map((l) => l.trim()).filter(Boolean);
 
   // ── Bilingual option lists + labels for the new controls ──
   const sep = cvLang === "en" ? ", " : "، ";
@@ -690,36 +691,53 @@ export default function AtsCvBuilder({ accessCode }) {
   // under the name is simply the most recent role's job title, if any.
   const contactLineParts = [form.email, cvPhoneValue, cityValue, form.linkedin, form.yearsOfExperience && `${form.yearsOfExperience} ${t.yearsOfExperience}`].filter(Boolean);
 
+  // Resolves an AI-enhanceable item to whatever it should actually show/
+  // export as right now: the AI version, a manual edit, or a reverted-to-
+  // original choice — enhancedItems is the single source of truth for all
+  // three once enhancement has run; before that (or if a key was never
+  // collected — e.g. an empty bullet) it just falls back to the raw text.
+  const getEnhancedText = (key, fallback) => enhancedItems[key]?.current ?? fallback;
+
   // Sorted most-recent-first for the generated CV, regardless of the order
   // entries were added in the form — an ongoing role always ranks above
-  // any finished one.
-  const displayExperiences = sortExperiencesDesc(experiences).map((x) => ({
+  // any finished one. _origIndex is carried through the sort so bullets can
+  // still be matched back to their stable "exp-{origIndex}-bullet-{j}" key.
+  const displayExperiences = sortExperiencesDesc(experiences.map((x, i) => ({ ...x, _origIndex: i }))).map((x) => ({
+    _origIndex: x._origIndex,
     title: x.title,
     employer: x.employer,
     period: formatPeriod(x, cvLang),
     // Joined back into the newline-per-point string the (untouched) PDF
     // template already expects — the structured list is purely a form-UX
     // improvement, the output format is unchanged.
-    bullets: (x.bullets || []).filter((b) => b.trim()).join("\n"),
+    bullets: (x.bullets || [])
+      .map((b, j) => (b.trim() ? getEnhancedText(`exp-${x._origIndex}-bullet-${j}`, b.trim()) : ""))
+      .filter(Boolean)
+      .join("\n"),
   }));
   const cvHeadline = displayExperiences.find((x) => x.title || x.employer)?.title || "";
 
-  const displayEducation = education.map((x) => {
+  const displayEducation = education.map((x, i) => {
     const degreeLabel = x.degreeChoice === OTHER ? x.degreeCustom : x.degreeChoice;
     const specialization = x.specializationChoice === OTHER ? x.specializationCustom : x.specializationChoice;
     const school = x.schoolChoice === OTHER ? x.schoolCustom : x.schoolChoice;
+    const gradProjectRaw = x.gradProject ? x.gradProject.trim() : "";
     return {
+      _origIndex: i,
       degree: [degreeLabel, specialization].filter(Boolean).join(" "),
       school,
       year: x.year,
       detail: x.detail,
-      gradProject: x.gradProject,
+      gradProject: gradProjectRaw ? getEnhancedText(`eduGradProject-${i}`, gradProjectRaw) : "",
     };
   });
 
   const displayCourses = courses.filter((c) => c.name || c.hours || c.provider || c.date);
   const displayCertifications = certifications.filter((c) => c.name || c.issuingBody || c.date);
-  const displayAchievementsStr = achievements.filter((a) => a.trim()).join("\n");
+  const displayAchievementsStr = achievements
+    .map((a, i) => (a.trim() ? getEnhancedText(`achievement-${i}`, a.trim()) : ""))
+    .filter(Boolean)
+    .join("\n");
 
   const techSkillsStr = techSkillTags.join(sep);
   const softSkillsStr = softSkillTags.join(sep);
@@ -840,9 +858,135 @@ export default function AtsCvBuilder({ accessCode }) {
     }
   }
 
+  // Flat list of every AI-enhanceable item currently in the form, keyed
+  // stably so the preview can match responses back to the right bullet/
+  // achievement/graduation project regardless of experience sort order.
+  function collectEnhancementItems() {
+    const keys = [];
+    const texts = [];
+    experiences.forEach((x, i) => {
+      (x.bullets || []).forEach((b, j) => {
+        if (b.trim()) {
+          keys.push(`exp-${i}-bullet-${j}`);
+          texts.push(b.trim());
+        }
+      });
+    });
+    achievements.forEach((a, i) => {
+      if (a.trim()) {
+        keys.push(`achievement-${i}`);
+        texts.push(a.trim());
+      }
+    });
+    education.forEach((x, i) => {
+      if (x.gradProject && x.gradProject.trim()) {
+        keys.push(`eduGradProject-${i}`);
+        texts.push(x.gradProject.trim());
+      }
+    });
+    return { keys, texts };
+  }
+
+  // Fire-and-forget, same once-per-session guard as generateAiSummary — a
+  // single batched call covers every bullet/achievement/graduation project
+  // instead of one request per item.
+  async function generateAiEnhancements() {
+    const { keys, texts } = collectEnhancementItems();
+    if (!keys.length) {
+      setItemsEnhanced(true);
+      return;
+    }
+
+    // Seed immediately with the original text so the preview never shows
+    // blank/loading placeholders for these items — they quietly upgrade to
+    // the AI version once it arrives.
+    setEnhancedItems((prev) => {
+      const next = { ...prev };
+      keys.forEach((k, idx) => {
+        if (!next[k]) next[k] = { original: texts[idx], ai: null, current: texts[idx], edited: false };
+      });
+      return next;
+    });
+
+    setAiItemsLoading(true);
+    setAiItemsError("");
+    try {
+      const res = await fetch("/api/enhance-items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lang: cvLang, items: texts }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(data.items) || data.items.length !== texts.length) {
+        throw new Error(data.error || "AI item enhancement failed");
+      }
+      setEnhancedItems((prev) => {
+        const next = { ...prev };
+        keys.forEach((k, idx) => {
+          // A manual edit (or a revert-to-original) made while this call
+          // was still in flight wins — never clobber it with the AI result.
+          if (next[k]?.edited) return;
+          next[k] = { original: texts[idx], ai: data.items[idx], current: data.items[idx], edited: false };
+        });
+        return next;
+      });
+    } catch {
+      setAiItemsError(t.itemsGenerateError);
+    } finally {
+      setAiItemsLoading(false);
+      setItemsEnhanced(true);
+    }
+  }
+
+  function setItemCurrent(key, value) {
+    setEnhancedItems((prev) => ({ ...prev, [key]: { ...prev[key], current: value, edited: true } }));
+  }
+
+  function toggleOriginal(key) {
+    setOriginalToggles((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function useOriginalText(key) {
+    setEnhancedItems((prev) => ({ ...prev, [key]: { ...prev[key], current: prev[key].original, edited: true } }));
+    setOriginalToggles((prev) => ({ ...prev, [key]: false }));
+  }
+
+  // Renders one AI-enhanceable item: an editable field showing whatever is
+  // "current" (AI text, a manual edit, or the reverted original), plus —
+  // once an AI version actually exists — a small toggle to reveal the
+  // original and revert to it losslessly.
+  function enhancedItemBlock(key, fallbackText) {
+    const item = enhancedItems[key] || { original: fallbackText, ai: null, current: fallbackText };
+    const hasAiVersion = item.ai != null;
+    const showingOriginal = !!originalToggles[key];
+    return (
+      <div>
+        <AutoTextarea
+          value={item.current}
+          onChange={(e) => setItemCurrent(key, e.target.value)}
+          dir={cvDir}
+        />
+        {hasAiVersion && (
+          <div className="no-print">
+            <button type="button" onClick={() => toggleOriginal(key)} style={originalToggleBtn}>
+              {showingOriginal ? t.hideOriginal : t.showOriginal}
+            </button>
+            {showingOriginal && (
+              <div style={originalBox}>
+                <div style={{ marginBottom: 6 }}>{item.original}</div>
+                <button type="button" onClick={() => useOriginalText(key)} style={useOriginalBtn}>{t.useOriginal}</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function goToPreview() {
     setPreview(true);
     if (!aiSummaryGenerated) generateAiSummary();
+    if (!itemsEnhanced) generateAiEnhancements();
   }
 
   // ─────────────────── LANGUAGE (chosen first) ───────────────────
@@ -962,6 +1106,12 @@ export default function AtsCvBuilder({ accessCode }) {
           </div>
         )}
 
+        {aiItemsError && (
+          <div dir={cvDir} className="no-print" style={{ maxWidth: 700, margin: "16px auto 0", padding: "10px 16px" }}>
+            <div style={{ ...warnStyle, background: "#fbeaea", borderRadius: 8, padding: "10px 12px" }}>{aiItemsError}</div>
+          </div>
+        )}
+
         <div style={{ display: "flex", justifyContent: "center", padding: "24px 12px 60px" }}>
           <div className="cv-page" style={cvPage}>
             {/* Header: name + professional headline (the most recent role's title) */}
@@ -984,15 +1134,11 @@ export default function AtsCvBuilder({ accessCode }) {
                     {aiSummaryError && (
                       <div className="no-print" style={{ ...warnStyle, marginBottom: 6 }}>{aiSummaryError}</div>
                     )}
-                    <textarea
-                      ref={summaryTextareaRef}
+                    <AutoTextarea
                       value={form.summary}
                       onChange={(e) => setForm((f) => ({ ...f, summary: e.target.value }))}
                       placeholder={t.summaryPlaceholder}
-                      rows={1}
-                      style={{ ...pBody, width: "100%", border: "1px dashed transparent", borderRadius: 4, padding: 2, resize: "none", overflow: "hidden", fontFamily: "inherit", background: "transparent" }}
-                      onFocus={(e) => { e.target.style.borderColor = THEME.border; }}
-                      onBlur={(e) => { e.target.style.borderColor = "transparent"; }}
+                      dir={cvDir}
                     />
                     <div className="no-print" style={{ fontSize: 10.5, color: C.slate, marginTop: 3 }}>{t.summaryEditHint}</div>
                   </>
@@ -1000,10 +1146,12 @@ export default function AtsCvBuilder({ accessCode }) {
               </Section>
             )}
 
-            {displayAchievementsStr && (
+            {achievements.some((a) => a.trim()) && (
               <Section title={t.achievements}>
                 <ul style={ulBody(cvDir)}>
-                  {splitLines(displayAchievementsStr).map((a, i) => <li key={i} style={liBody(cvDir)}>{a}</li>)}
+                  {achievements.map((a, i) => a.trim() ? (
+                    <li key={i} style={liBody(cvDir)}>{enhancedItemBlock(`achievement-${i}`, a.trim())}</li>
+                  ) : null)}
                 </ul>
               </Section>
             )}
@@ -1032,9 +1180,11 @@ export default function AtsCvBuilder({ accessCode }) {
                     <div style={{ fontWeight: 700, color: C.ink, fontSize: 13.5 }}>
                       {[x.title, x.employer, x.period].filter(Boolean).join(" | ")}
                     </div>
-                    {x.bullets && (
+                    {(experiences[x._origIndex]?.bullets || []).some((b) => b.trim()) && (
                       <ul style={ulBody(cvDir)}>
-                        {splitLines(x.bullets).map((b, j) => <li key={j} style={liBody(cvDir)}>{b}</li>)}
+                        {(experiences[x._origIndex]?.bullets || []).map((b, j) => b.trim() ? (
+                          <li key={j} style={liBody(cvDir)}>{enhancedItemBlock(`exp-${x._origIndex}-bullet-${j}`, b.trim())}</li>
+                        ) : null)}
                       </ul>
                     )}
                   </div>
@@ -1050,7 +1200,12 @@ export default function AtsCvBuilder({ accessCode }) {
                       {[x.degree, x.school, x.year].filter(Boolean).join(" | ")}
                     </div>
                     {x.detail && <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}><strong style={{ color: C.ink }}>{t.gpa}:</strong> {x.detail}</div>}
-                    {x.gradProject && <div style={{ fontSize: 12, color: C.slate, marginTop: 2 }}><strong style={{ color: C.ink }}>{t.gradProject}:</strong> {x.gradProject}</div>}
+                    {education[x._origIndex]?.gradProject?.trim() && (
+                      <div style={{ fontSize: 12, color: C.slate, marginTop: 4 }}>
+                        <strong style={{ color: C.ink }}>{t.gradProject}:</strong>
+                        {enhancedItemBlock(`eduGradProject-${x._origIndex}`, education[x._origIndex].gradProject.trim())}
+                      </div>
+                    )}
                   </div>
                 ))}
               </Section>
@@ -1427,6 +1582,34 @@ function Section({ title, children }) {
   );
 }
 
+// Self-resizing, print-transparent textarea used for every editable CV
+// field in the preview (summary, bullets, achievements, graduation
+// project). A local ref+effect is needed (not just an onInput handler)
+// because `value` can change programmatically — an AI result landing, or
+// a saved session being restored — not just from user keystrokes.
+function AutoTextarea({ value, onChange, placeholder, dir }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      rows={1}
+      dir={dir}
+      style={{ ...pBody, width: "100%", border: "1px dashed transparent", borderRadius: 4, padding: 2, resize: "none", overflow: "hidden", fontFamily: "inherit", background: "transparent" }}
+      onFocus={(e) => { e.target.style.borderColor = THEME.border; }}
+      onBlur={(e) => { e.target.style.borderColor = "transparent"; }}
+    />
+  );
+}
+
 // ── Styles (form-only — the CV preview/PDF below keeps its own black/white styling) ──
 const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#3a4a5a", marginBottom: 6 };
 const hintStyle = { fontSize: 11.5, color: "#3a4a5a", marginTop: 5, lineHeight: 1.5 };
@@ -1442,6 +1625,9 @@ const pBody = { margin: 0, fontSize: 13, lineHeight: 1.85, color: "#333333", tex
 const ulBody = (dir) => ({ margin: "5px 0 0", [dir === "ltr" ? "paddingLeft" : "paddingRight"]: 18, listStyle: "none" });
 const liBody = (dir) => ({ fontSize: 12.5, lineHeight: 1.7, color: "#333333", position: "relative", [dir === "ltr" ? "paddingLeft" : "paddingRight"]: 12, marginBottom: 3 });
 const skillCat = { fontWeight: 700, color: "#000000", fontSize: 12.5 };
+const originalToggleBtn = { background: "transparent", border: "none", padding: 0, marginTop: 2, fontSize: 10.5, color: "#5a7590", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" };
+const originalBox = { marginTop: 4, marginBottom: 4, padding: "8px 10px", background: "#f5f7fa", border: "1px dashed #dde4ec", borderRadius: 6, fontSize: 12, color: "#5a6b7a", lineHeight: 1.7 };
+const useOriginalBtn = { background: "#e8eef4", border: "1px solid #dde4ec", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#1a3a5c", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 
 const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#1a3a5c", color: "#ffffff", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 const btnGhost = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#1a3a5c", border: "1px solid #dde4ec", borderRadius: 8, padding: "11px 18px", fontSize: 14, fontWeight: 600, fontFamily: "inherit" };
