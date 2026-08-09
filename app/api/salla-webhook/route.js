@@ -86,9 +86,20 @@ async function generateCodeIfUnderReview({ sallaOrderNumber, statusSlug, custome
 }
 
 export async function POST(request) {
-  const rawBody = await request.text();
+  // Logged before anything else — including before reading the body or
+  // checking auth — so a hit is visible in Vercel logs even if everything
+  // after this point fails or rejects. If this line never shows up for a
+  // delivery you triggered in Salla, the request never reached this
+  // endpoint at all (wrong URL, webhook not saved/active on Salla's side,
+  // DNS/TLS issue, etc.) — that's a Salla-side or config problem, not a
+  // bug in this handler.
+  console.log(`[salla-webhook] incoming request — has x-salla-signature: ${request.headers.has("x-salla-signature")}, has authorization: ${request.headers.has("authorization")}`);
 
-  if (!verifySallaWebhook(request, rawBody)) {
+  const rawBody = await request.text();
+  const authOk = verifySallaWebhook(request, rawBody);
+  console.log(`[salla-webhook] auth check: ${authOk ? "accepted" : "REJECTED"}`);
+
+  if (!authOk) {
     console.warn("[salla-webhook] rejected: invalid or missing signature/token.");
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
