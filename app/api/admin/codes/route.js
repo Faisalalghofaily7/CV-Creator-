@@ -1,15 +1,9 @@
 import { NextResponse } from "next/server";
 import { getSql } from "../../../../lib/db";
 import { requireAdminApi } from "../../../../lib/adminAuth";
+import { createAccessCode } from "../../../../lib/accessCodes";
 
 export const runtime = "nodejs";
-
-const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-function generateCode() {
-  const seg = (n) => Array.from({ length: n }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
-  return `CV-${seg(4)}-${seg(4)}`;
-}
 
 export async function GET(request) {
   const authError = await requireAdminApi(request, { requireRole: "admin" });
@@ -37,25 +31,8 @@ export async function POST(request) {
     const body = await request.json().catch(() => ({}));
     const sallaOrderNumber = typeof body.sallaOrderNumber === "string" ? body.sallaOrderNumber.trim() || null : null;
 
-    const sql = getSql();
-    // Codes are short and random collisions are rare but not impossible —
-    // retry a few times on a unique-constraint violation instead of
-    // failing the whole request.
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const code = generateCode();
-      try {
-        const [row] = await sql`
-          INSERT INTO access_codes (code, salla_order_number, status)
-          VALUES (${code}, ${sallaOrderNumber}, 'available')
-          RETURNING id, code, salla_order_number, status, created_at, used_at
-        `;
-        return NextResponse.json({ code: row });
-      } catch (err) {
-        if (err?.code === "23505" && attempt < 4) continue; // unique_violation on code — retry
-        throw err;
-      }
-    }
-    throw new Error("Could not generate a unique code after several attempts.");
+    const row = await createAccessCode({ sallaOrderNumber });
+    return NextResponse.json({ code: row });
   } catch (err) {
     console.error("Failed to create access code:", err);
     return NextResponse.json({ error: "تعذّر إنشاء الكود. حاول مرة أخرى." }, { status: 500 });

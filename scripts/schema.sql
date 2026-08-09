@@ -31,6 +31,15 @@ ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_target_role TEXT;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS sending_status TEXT NOT NULL DEFAULT 'pending'
   CHECK (sending_status IN ('pending', 'in_progress', 'on_hold', 'sent'));
 
+-- Raw order-status slug as last reported by Salla's order.status.updated
+-- webhook (e.g. 'completed', 'cancelled', 'refunded') — informational only,
+-- shown to staff for context. Deliberately separate from `status` (whether
+-- this code has been redeemed to generate a CV) and `sending_status`
+-- (whether staff have sent the CV out): Salla's order lifecycle is not the
+-- same thing as either, and driving those from it would risk locking a
+-- paying customer out of a code that was never actually used.
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS salla_order_status TEXT;
+
 -- Timestamped audit trail of every sending-status change, so staff can see
 -- when a record moved between states and (best-effort) who changed it —
 -- there's currently a single shared admin login, not per-admin accounts, so
