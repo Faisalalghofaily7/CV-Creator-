@@ -1355,16 +1355,6 @@ export default function AtsCvBuilder({ accessCode }) {
               </Section>
             )}
 
-            {achievements.some((a) => a.trim()) && (
-              <Section title={t.achievements}>
-                <ul style={ulBody(cvDir)}>
-                  {achievements.map((a, i) => a.trim() ? (
-                    <li key={i} style={liBody(cvDir)}>{enhancedItemBlock(`achievement-${i}`, a.trim())}</li>
-                  ) : null)}
-                </ul>
-              </Section>
-            )}
-
             {(techSkillTags.length > 0 || softSkillTags.length > 0) && (
               <Section title={t.skills}>
                 {techSkillTags.length > 0 && (
@@ -1420,6 +1410,22 @@ export default function AtsCvBuilder({ accessCode }) {
               </Section>
             )}
 
+            {languagesStr && (
+              <Section title={t.languages}>
+                <p style={pBody}>{languagesStr}</p>
+              </Section>
+            )}
+
+            {achievements.some((a) => a.trim()) && (
+              <Section title={t.achievements}>
+                <ul style={ulBody(cvDir)}>
+                  {achievements.map((a, i) => a.trim() ? (
+                    <li key={i} style={liBody(cvDir)}>{enhancedItemBlock(`achievement-${i}`, a.trim())}</li>
+                  ) : null)}
+                </ul>
+              </Section>
+            )}
+
             {displayCourses.length > 0 && (
               <Section title={t.courses}>
                 {displayCourses.map((x, i) => (
@@ -1444,12 +1450,6 @@ export default function AtsCvBuilder({ accessCode }) {
                     </div>
                   </div>
                 ))}
-              </Section>
-            )}
-
-            {languagesStr && (
-              <Section title={t.languages}>
-                <p style={pBody}>{languagesStr}</p>
               </Section>
             )}
 
