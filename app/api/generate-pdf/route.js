@@ -65,7 +65,7 @@ export async function POST(request) {
   let page;
   try {
     const body = await request.json();
-    const { form, experiences, education, courses, certifications, techSkills, softSkills, lang, accessCode } = body;
+    const { form, experiences, education, courses, certifications, customSections, techSkills, softSkills, lang, accessCode } = body;
 
     const code = typeof accessCode === "string" ? accessCode.trim() : "";
     if (!code) {
@@ -85,7 +85,7 @@ export async function POST(request) {
     const splitLines = (t) => t.split("\n").map((l) => l.trim()).filter(Boolean);
     const splitList = (t) => t.split(/[،,\n]/).map((l) => l.trim()).filter(Boolean);
 
-    const html = buildCvHtml({ form, experiences, education, courses, certifications, techSkills, softSkills, splitLines, splitList, lang });
+    const html = buildCvHtml({ form, experiences, education, courses, certifications, customSections, techSkills, softSkills, splitLines, splitList, lang });
 
     let tMark = Date.now();
     const browser = await getBrowser();

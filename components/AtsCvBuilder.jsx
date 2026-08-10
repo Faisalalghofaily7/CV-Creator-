@@ -253,11 +253,15 @@ export default function AtsCvBuilder({ accessCode }) {
   // content mixed into the PDF.
   function guardLangInput(id, value) {
     if (cvLang !== "en" || !ARABIC_RE.test(value)) return value;
-    // Only the name field still rejects Arabic outright — names are never
-    // transliterated/translated. Every other field now allows Arabic input
-    // even in English mode; the AI translates it into professional English
-    // when the CV is generated (see generateAiSummary/generateAiEnhancements).
-    if (id !== "name") return value;
+    // Only the name field and custom-section titles still reject Arabic
+    // outright — a name is never transliterated/translated, and a custom
+    // section's title is a short label the applicant chose, not free-form
+    // body content, so it follows the same "must actually be in the CV's
+    // language" rule rather than being auto-translated. Every other field
+    // allows Arabic input even in English mode; the AI translates it into
+    // professional English when the CV is generated (see
+    // generateAiSummary/generateAiEnhancements).
+    if (id !== "name" && !id.startsWith("customSectionTitle-")) return value;
     setBlockedField(id);
     window.clearTimeout(guardLangInput._t);
     guardLangInput._t = window.setTimeout(() => setBlockedField((cur) => (cur === id ? null : cur)), 2000);
@@ -583,6 +587,11 @@ export default function AtsCvBuilder({ accessCode }) {
   const [courses, setCourses] = useState(saved?.courses ?? []);
   const [achievements, setAchievements] = useState(saved?.achievements ?? []);
   const [certifications, setCertifications] = useState(saved?.certifications ?? []);
+  // Fully user-defined sections (a title + bullet points) for anything the
+  // fixed section list doesn't cover — e.g. Volunteering, Publications.
+  // Empty by default like the other optional sections; the applicant can
+  // add as many as they want.
+  const [customSections, setCustomSections] = useState(saved?.customSections ?? []);
 
   // Persists the current step and all form data on every change, keyed to
   // this access code, so refreshing the page — on ANY step, including the
@@ -594,10 +603,10 @@ export default function AtsCvBuilder({ accessCode }) {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed,
         form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries,
-        courses, achievements, certifications, aiSummaryGenerated, itemsEnhanced, enhancedItems,
+        courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, aiSummaryGenerated, itemsEnhanced, enhancedItems]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -636,6 +645,20 @@ export default function AtsCvBuilder({ accessCode }) {
     const copy = [...certifications];
     copy[i][k] = e.target.value;
     setCertifications(copy);
+  };
+
+  // ── Custom-section helpers (optional, user-defined title + points) ──
+  const addCustomSection = () => setCustomSections([...customSections, { title: "", points: [] }]);
+  const rmCustomSection = (i) => setCustomSections(customSections.filter((_, x) => x !== i));
+  const setCustomSectionTitle = (i, value) => {
+    const copy = [...customSections];
+    copy[i] = { ...copy[i], title: guardLangInput(`customSectionTitle-${i}`, value) };
+    setCustomSections(copy);
+  };
+  const setCustomSectionPoints = (i, points) => {
+    const copy = [...customSections];
+    copy[i] = { ...copy[i], points };
+    setCustomSections(copy);
   };
 
   // ── Language helpers ──
@@ -710,6 +733,11 @@ export default function AtsCvBuilder({ accessCode }) {
     certsHint: "Optional — e.g. SOCPA, CMA, or a professional membership.",
     certCard: "Certification / Membership", certName: "Certification / Membership Name",
     certIssuingBody: "Issuing Body", certDate: "Date (optional)", addCert: "Add another certification",
+    customSectionsTitle: "Custom Sections", customSectionsHint: "Optional — add any section not covered above (e.g. Volunteering, Publications). You can add more than one.",
+    customSectionCard: "Custom Section", customSectionTitleLabel: "Section Title", customSectionTitlePh: "e.g. Volunteering",
+    customSectionTitleEnglishOnly: "The section title must be entered in English only for an English CV (no translation).",
+    customSectionPointsLabel: "Points", customSectionPointPh: "e.g. Organized a community fundraising event", addCustomSectionPoint: "Add point",
+    addCustomSection: "Add custom section",
   } : {
     city: "المدينة", experienceHeading: "الخبرات العملية والتدريب", expCard: "خبرة",
     jobTitle: "المسمى الوظيفي", employer: "جهة العمل", from: "من", to: "إلى", month: "الشهر", year: "السنة",
@@ -747,6 +775,11 @@ export default function AtsCvBuilder({ accessCode }) {
     certsHint: "اختياري — مثل SOCPA أو CMA أو عضوية مهنية.",
     certCard: "شهادة / عضوية", certName: "اسم الشهادة / العضوية",
     certIssuingBody: "الجهة المانحة", certDate: "التاريخ (اختياري)", addCert: "إضافة شهادة أخرى",
+    customSectionsTitle: "أقسام مخصصة", customSectionsHint: "اختياري — أضف أي قسم غير موجود أعلاه (مثل التطوع أو المنشورات). يمكنك إضافة أكثر من قسم.",
+    customSectionCard: "قسم مخصص", customSectionTitleLabel: "عنوان القسم", customSectionTitlePh: "مثال: التطوع",
+    customSectionTitleEnglishOnly: "عنوان القسم يجب إدخاله بالأحرف الإنجليزية فقط للسيرة الإنجليزية (بدون ترجمة).",
+    customSectionPointsLabel: "النقاط", customSectionPointPh: "مثال: تنظيم حملة تبرع خيرية في المجتمع المحلي", addCustomSectionPoint: "إضافة نقطة",
+    addCustomSection: "إضافة قسم مخصص",
   };
 
   // ── Validation (gentle, non-blocking) ──
@@ -812,6 +845,21 @@ export default function AtsCvBuilder({ accessCode }) {
     .map((a, i) => (a.trim() ? getEnhancedText(`achievement-${i}`, a.trim()) : ""))
     .filter(Boolean)
     .join("\n");
+  // Title: spell-checked only (see collectCustomSectionTitles), resolved
+  // as plain text — like every other section heading in the CV, it's not
+  // an editable/toggle-able field. Points: polished exactly like
+  // achievements, resolved as a newline-joined string for the (untouched)
+  // PDF template's splitLines() convention.
+  const displayCustomSections = customSections
+    .map((s, i) => ({
+      _origIndex: i,
+      title: s.title.trim() ? getEnhancedText(`customSectionTitle-${i}`, s.title.trim()) : "",
+      points: (s.points || [])
+        .map((p, j) => (p.trim() ? getEnhancedText(`customSection-${i}-point-${j}`, p.trim()) : ""))
+        .filter(Boolean)
+        .join("\n"),
+    }))
+    .filter((s) => s.title || s.points);
 
   const techSkillsStr = techSkillTags.join(sep);
   const softSkillsStr = softSkillTags.join(sep);
@@ -859,6 +907,7 @@ export default function AtsCvBuilder({ accessCode }) {
           education: displayEducation,
           courses: displayCourses,
           certifications: displayCertifications,
+          customSections: displayCustomSections,
           techSkills: techSkillsStr,
           softSkills: softSkillsStr,
           lang: cvLang,
@@ -958,15 +1007,41 @@ export default function AtsCvBuilder({ accessCode }) {
         texts.push(x.gradProject.trim());
       }
     });
+    customSections.forEach((s, i) => {
+      (s.points || []).forEach((p, j) => {
+        if (p.trim()) {
+          keys.push(`customSection-${i}-point-${j}`);
+          texts.push(p.trim());
+        }
+      });
+    });
     return { keys, texts };
   }
 
-  // Fire-and-forget, same once-per-session guard as generateAiSummary — a
-  // single batched call covers every bullet/achievement/graduation project
-  // instead of one request per item.
+  // Custom-section TITLES go through a separate, much narrower AI call
+  // (spell-check only, never rephrased) — see collectEnhancementItems above
+  // for the points, which are polished exactly like achievements/bullets.
+  function collectCustomSectionTitles() {
+    const keys = [];
+    const texts = [];
+    customSections.forEach((s, i) => {
+      if (s.title && s.title.trim()) {
+        keys.push(`customSectionTitle-${i}`);
+        texts.push(s.title.trim());
+      }
+    });
+    return { keys, texts };
+  }
+
+  // Fire-and-forget, same once-per-session guard as generateAiSummary — one
+  // batched call covers every bullet/achievement/graduation project/custom-
+  // section point, run alongside (not blocking on) the separate title
+  // spell-check call so either can fail independently and fall back to the
+  // applicant's original text/title without affecting the other.
   async function generateAiEnhancements() {
     const { keys, texts } = collectEnhancementItems();
-    if (!keys.length) {
+    const { keys: titleKeys, texts: titleTexts } = collectCustomSectionTitles();
+    if (!keys.length && !titleKeys.length) {
       setItemsEnhanced(true);
       return;
     }
@@ -979,37 +1054,72 @@ export default function AtsCvBuilder({ accessCode }) {
       keys.forEach((k, idx) => {
         if (!next[k]) next[k] = { original: texts[idx], ai: null, current: texts[idx], edited: false };
       });
+      titleKeys.forEach((k, idx) => {
+        if (!next[k]) next[k] = { original: titleTexts[idx], ai: null, current: titleTexts[idx], edited: false };
+      });
       return next;
     });
 
     setAiItemsLoading(true);
     setAiItemsError("");
-    try {
-      const res = await fetch("/api/enhance-items", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lang: cvLang, items: texts }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !Array.isArray(data.items) || data.items.length !== texts.length) {
-        throw new Error(data.error || "AI item enhancement failed");
-      }
-      setEnhancedItems((prev) => {
-        const next = { ...prev };
-        keys.forEach((k, idx) => {
-          // A manual edit (or a revert-to-original) made while this call
-          // was still in flight wins — never clobber it with the AI result.
-          if (next[k]?.edited) return;
-          next[k] = { original: texts[idx], ai: data.items[idx], current: data.items[idx], edited: false };
+
+    const [itemsOutcome, titlesOutcome] = await Promise.allSettled([
+      keys.length
+        ? fetch("/api/enhance-items", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lang: cvLang, items: texts }),
+          }).then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => ({})) }))
+        : Promise.resolve(null),
+      titleKeys.length
+        ? fetch("/api/spellcheck-title", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lang: cvLang, titles: titleTexts }),
+          }).then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => ({})) }))
+        : Promise.resolve(null),
+    ]);
+
+    // Points (bullets/achievements/grad projects/custom-section points):
+    // a failure here is user-visible via aiItemsError, same as before this
+    // feature — custom-section points are just more of the same kind of item.
+    let itemsFailed = false;
+    if (keys.length) {
+      const outcome = itemsOutcome.status === "fulfilled" ? itemsOutcome.value : null;
+      if (outcome?.ok && Array.isArray(outcome.data.items) && outcome.data.items.length === texts.length) {
+        setEnhancedItems((prev) => {
+          const next = { ...prev };
+          keys.forEach((k, idx) => {
+            if (next[k]?.edited) return; // a manual edit/revert in flight wins
+            next[k] = { original: texts[idx], ai: outcome.data.items[idx], current: outcome.data.items[idx], edited: false };
+          });
+          return next;
         });
-        return next;
-      });
-    } catch {
-      setAiItemsError(t.itemsGenerateError);
-    } finally {
-      setAiItemsLoading(false);
-      setItemsEnhanced(true);
+      } else {
+        itemsFailed = true;
+      }
     }
+
+    // Title spell-check: conservative and low-stakes by design, so a
+    // failure here just silently keeps the seeded original title — no
+    // shared error banner, matching "fall back to original, nothing crashes".
+    if (titleKeys.length) {
+      const outcome = titlesOutcome.status === "fulfilled" ? titlesOutcome.value : null;
+      if (outcome?.ok && Array.isArray(outcome.data.titles) && outcome.data.titles.length === titleTexts.length) {
+        setEnhancedItems((prev) => {
+          const next = { ...prev };
+          titleKeys.forEach((k, idx) => {
+            if (next[k]?.edited) return;
+            next[k] = { original: titleTexts[idx], ai: outcome.data.titles[idx], current: outcome.data.titles[idx], edited: false };
+          });
+          return next;
+        });
+      }
+    }
+
+    if (itemsFailed) setAiItemsError(t.itemsGenerateError);
+    setAiItemsLoading(false);
+    setItemsEnhanced(true);
   }
 
   function setItemCurrent(key, value) {
@@ -1342,6 +1452,18 @@ export default function AtsCvBuilder({ accessCode }) {
                 <p style={pBody}>{languagesStr}</p>
               </Section>
             )}
+
+            {displayCustomSections.map((s) => (
+              <Section key={s._origIndex} title={s.title || t.customSectionFallbackTitle}>
+                {s.points && (
+                  <ul style={ulBody(cvDir)}>
+                    {customSections[s._origIndex].points.map((p, j) => p.trim() ? (
+                      <li key={j} style={liBody(cvDir)}>{enhancedItemBlock(`customSection-${s._origIndex}-point-${j}`, p.trim())}</li>
+                    ) : null)}
+                  </ul>
+                )}
+              </Section>
+            ))}
           </div>
         </div>
 
@@ -1633,6 +1755,34 @@ export default function AtsCvBuilder({ accessCode }) {
                   </div>
                 ))}
                 <button onClick={addCourse} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addCourse}</button>
+              </div>
+
+              {/* Custom Sections — fully user-defined title + points */}
+              <div style={{ marginTop: 24 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: THEME.primary, marginBottom: 4 }}>{L.customSectionsTitle}</div>
+                <div style={hintStyle}>{L.customSectionsHint}</div>
+                {customSections.map((s, i) => (
+                  <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginTop: 12, marginBottom: 14, background: THEME.card }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>{L.customSectionCard} #{i + 1}</span>
+                      <button onClick={() => rmCustomSection(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={labelStyle}>{L.customSectionTitleLabel}</label>
+                      <input
+                        value={s.title}
+                        onChange={(e) => setCustomSectionTitle(i, e.target.value)}
+                        placeholder={L.customSectionTitlePh}
+                        style={inputStyle}
+                      />
+                      {blockedField === `customSectionTitle-${i}` && <div style={warnStyle}>{L.customSectionTitleEnglishOnly}</div>}
+                    </div>
+                    {listInput(`customSection-${i}-points`, L.customSectionPointsLabel, s.points, (items) => setCustomSectionPoints(i, items), {
+                      ph: L.customSectionPointPh, addLabel: L.addCustomSectionPoint,
+                    })}
+                  </div>
+                ))}
+                <button onClick={addCustomSection} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addCustomSection}</button>
               </div>
             </>
           )}
