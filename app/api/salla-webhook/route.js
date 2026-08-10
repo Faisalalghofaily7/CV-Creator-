@@ -80,6 +80,8 @@ async function generateCodeIfUnderReview({ sallaOrderNumber, statusSlug, custome
     applicantEmail,
     applicantPhone,
     sallaOrderStatus: statusSlug,
+    generationSource: "salla_webhook",
+    createdBy: null, // no human triggered this — shown in the UI as "تلقائي / النظام"
   });
   console.log(`[salla-webhook] order ${sallaOrderNumber} reached under_review — generated code ${row.code} (phone: ${applicantPhone || "—"})`);
   return { generated: true, code: row.code };
@@ -159,9 +161,9 @@ export async function POST(request) {
 
       // Not a fresh under_review generation (already had a code, or this
       // particular status isn't under_review) — keep the informational
-      // status column current either way. Never touches `status` (code
-      // redemption) or `sending_status` (staff CV-sending progress), which
-      // mean something entirely different from Salla's order lifecycle.
+      // status column current either way. Never touches `lifecycle_status`
+      // (our own code/order lifecycle — redeemed/exported/sent), which
+      // means something entirely different from Salla's order lifecycle.
       const sql = getSql();
       const [updated] = await sql`
         UPDATE access_codes

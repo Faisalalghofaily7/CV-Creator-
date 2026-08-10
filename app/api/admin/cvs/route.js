@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSql } from "../../../../lib/db";
 import { requireAdminApi } from "../../../../lib/adminAuth";
-import { isValidSendingStatus } from "../../../../lib/sendingStatus";
+import { isValidLifecycleStatus } from "../../../../lib/lifecycleStatus";
 
 export const runtime = "nodejs";
 
@@ -14,17 +14,19 @@ export async function GET(request) {
     const statusFilter = new URL(request.url).searchParams.get("status");
 
     const rows =
-      statusFilter && isValidSendingStatus(statusFilter)
+      statusFilter && isValidLifecycleStatus(statusFilter)
         ? await sql`
             SELECT id, code, salla_order_number, applicant_name, applicant_email, applicant_phone,
-                   applicant_city, applicant_target_role, requested_package, pdf_language, sending_status, generated_at
+                   applicant_city, applicant_target_role, requested_package, generation_source, created_by,
+                   pdf_language, lifecycle_status, generated_at
             FROM access_codes
-            WHERE pdf_url IS NOT NULL AND sending_status = ${statusFilter}
+            WHERE pdf_url IS NOT NULL AND lifecycle_status = ${statusFilter}
             ORDER BY generated_at DESC
           `
         : await sql`
             SELECT id, code, salla_order_number, applicant_name, applicant_email, applicant_phone,
-                   applicant_city, applicant_target_role, requested_package, pdf_language, sending_status, generated_at
+                   applicant_city, applicant_target_role, requested_package, generation_source, created_by,
+                   pdf_language, lifecycle_status, generated_at
             FROM access_codes
             WHERE pdf_url IS NOT NULL
             ORDER BY generated_at DESC

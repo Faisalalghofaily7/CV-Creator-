@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock, Upload } from "lucide-react";
-import { SENDING_STATUSES, SENDING_STATUS_LABELS, SENDING_STATUS_COLORS } from "../lib/sendingStatus";
+import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock, Upload, Tag, User } from "lucide-react";
+import { LIFECYCLE_STATUSES, MANUAL_LIFECYCLE_STATUSES, LIFECYCLE_STATUS_LABELS, LIFECYCLE_STATUS_COLORS } from "../lib/lifecycleStatus";
+import { GENERATION_SOURCE_LABELS, GENERATION_SOURCE_COLORS, creatorLabel } from "../lib/generationSource";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
@@ -39,6 +40,7 @@ export default function AdminCodes({ role }) {
   const [newPhone, setNewPhone] = useState("");
   const [newName, setNewName] = useState("");
   const [newPackage, setNewPackage] = useState("");
+  const [codesStatusFilter, setCodesStatusFilter] = useState("");
 
   const [uploadFile, setUploadFile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -191,12 +193,12 @@ export default function AdminCodes({ role }) {
     }
   }
 
-  async function updateSendingStatus(id, newStatus) {
-    const previous = cvs.find((c) => c.id === id)?.sending_status;
+  async function updateLifecycleStatus(id, newStatus) {
+    const previous = cvs.find((c) => c.id === id)?.lifecycle_status;
     setUpdatingStatusId(id);
     setStatusErrors((prev) => ({ ...prev, [id]: "" }));
     // Optimistic update — reconciled/reverted below.
-    setCvs((prev) => prev.map((c) => (c.id === id ? { ...c, sending_status: newStatus } : c)));
+    setCvs((prev) => prev.map((c) => (c.id === id ? { ...c, lifecycle_status: newStatus } : c)));
     try {
       const res = await fetch(`/api/admin/cvs/${id}/status`, {
         method: "PATCH",
@@ -209,7 +211,7 @@ export default function AdminCodes({ role }) {
       // Keep an expanded timeline in sync with the change that was just made.
       if (expandedId === id) loadHistory(id);
     } catch (err) {
-      setCvs((prev) => prev.map((c) => (c.id === id ? { ...c, sending_status: previous } : c)));
+      setCvs((prev) => prev.map((c) => (c.id === id ? { ...c, lifecycle_status: previous } : c)));
       setStatusErrors((prev) => ({ ...prev, [id]: err.message || "تعذّر تحديث الحالة." }));
     } finally {
       setUpdatingStatusId(null);
@@ -323,6 +325,16 @@ export default function AdminCodes({ role }) {
           )}
         </div>
 
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: C.slate }}>تصفية حسب الحالة:</span>
+          <select value={codesStatusFilter} onChange={(e) => setCodesStatusFilter(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 10px", fontSize: 12.5 }}>
+            <option value="">الكل</option>
+            {LIFECYCLE_STATUSES.map((s) => (
+              <option key={s} value={s}>{LIFECYCLE_STATUS_LABELS[s]}</option>
+            ))}
+          </select>
+        </div>
+
         <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -334,42 +346,75 @@ export default function AdminCodes({ role }) {
                 <th style={thStyle}>رقم طلب سلة</th>
                 <th style={thStyle}>رقم الجوال</th>
                 <th style={thStyle}>الخدمة المطلوبة</th>
+                <th style={thStyle}>المصدر</th>
+                <th style={thStyle}>المُنشئ</th>
                 <th style={thStyle}>وقت الإنشاء</th>
+                <th style={thStyle}>السجل الزمني</th>
               </tr>
             </thead>
             <tbody>
               {loadingCodes ? (
-                <tr><td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
+                <tr><td colSpan={10} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
               ) : loadError ? (
-                <tr><td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{loadError}</td></tr>
+                <tr><td colSpan={10} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{loadError}</td></tr>
               ) : codes.length === 0 ? (
-                <tr><td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد أكواد بعد — اضغط "توليد كود جديد"</td></tr>
+                <tr><td colSpan={10} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد أكواد بعد — اضغط "توليد كود جديد"</td></tr>
               ) : (
-                codes.map((c) => (
-                  <tr key={c.id} style={{ borderTop: `1px solid ${C.line}` }}>
-                    <td style={{ ...tdStyle, fontFamily: "monospace", fontWeight: 700 }}>
-                      {c.code}
-                      <button onClick={() => handleCopy(c.code)} style={{ ...btnIcon, marginInlineStart: 6 }} title="نسخ">
-                        {copiedCode === c.code ? <Check size={14} /> : <Copy size={14} />}
-                      </button>
-                    </td>
-                    <td style={tdStyle}>
-                      <span style={c.status === "used" ? statusBadgeUsed : statusBadge}>{c.status === "used" ? "مستخدم" : "متاح"}</span>
-                    </td>
-                    <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_name || "—"}</td>
-                    <td style={tdStyle}>
-                      <input
-                        defaultValue={c.salla_order_number || ""}
-                        onBlur={(e) => e.target.value !== (c.salla_order_number || "") && updateOrder(c.id, e.target.value)}
-                        placeholder="مثال: 10234"
-                        style={{ ...inputStyle, padding: "6px 8px", fontSize: 12.5 }}
-                      />
-                    </td>
-                    <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_phone || "—"}</td>
-                    <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.requested_package || "—"}</td>
-                    <td style={{ ...tdStyle, color: C.slate, fontSize: 12 }}>{new Date(c.created_at).toLocaleString("ar-SA")}</td>
-                  </tr>
-                ))
+                codes
+                  .filter((c) => !codesStatusFilter || c.lifecycle_status === codesStatusFilter)
+                  .map((c) => {
+                    const statusColors = LIFECYCLE_STATUS_COLORS[c.lifecycle_status] || LIFECYCLE_STATUS_COLORS.available;
+                    const sourceColors = GENERATION_SOURCE_COLORS[c.generation_source] || GENERATION_SOURCE_COLORS.unknown;
+                    const expanded = expandedId === c.id;
+                    const history = historyCache[c.id];
+                    return (
+                    <React.Fragment key={c.id}>
+                    <tr style={{ borderTop: `1px solid ${C.line}` }}>
+                      <td style={{ ...tdStyle, fontFamily: "monospace", fontWeight: 700 }}>
+                        {c.code}
+                        <button onClick={() => handleCopy(c.code)} style={{ ...btnIcon, marginInlineStart: 6 }} title="نسخ">
+                          {copiedCode === c.code ? <Check size={14} /> : <Copy size={14} />}
+                        </button>
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{ display: "inline-block", background: statusColors.bg, color: statusColors.fg, fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" }}>
+                          {LIFECYCLE_STATUS_LABELS[c.lifecycle_status] || c.lifecycle_status}
+                        </span>
+                      </td>
+                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_name || "—"}</td>
+                      <td style={tdStyle}>
+                        <input
+                          defaultValue={c.salla_order_number || ""}
+                          onBlur={(e) => e.target.value !== (c.salla_order_number || "") && updateOrder(c.id, e.target.value)}
+                          placeholder="مثال: 10234"
+                          style={{ ...inputStyle, padding: "6px 8px", fontSize: 12.5 }}
+                        />
+                      </td>
+                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_phone || "—"}</td>
+                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.requested_package || "—"}</td>
+                      <td style={tdStyle}>
+                        <span style={{ display: "inline-block", background: sourceColors.bg, color: sourceColors.fg, fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 9px", whiteSpace: "nowrap" }}>
+                          {GENERATION_SOURCE_LABELS[c.generation_source] || GENERATION_SOURCE_LABELS.unknown}
+                        </span>
+                      </td>
+                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{creatorLabel(c)}</td>
+                      <td style={{ ...tdStyle, color: C.slate, fontSize: 12 }}>{new Date(c.created_at).toLocaleString("ar-SA")}</td>
+                      <td style={tdStyle}>
+                        <button onClick={() => toggleHistory(c.id)} style={btnHistoryToggle}>
+                          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} السجل
+                        </button>
+                      </td>
+                    </tr>
+                    {expanded && (
+                      <tr>
+                        <td colSpan={10} style={{ padding: "10px 14px", background: C.soft, borderTop: `1px dashed ${C.line}` }}>
+                          <TimelineList history={history} />
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
+                    );
+                  })
               )}
             </tbody>
           </table>
@@ -433,11 +478,11 @@ export default function AdminCodes({ role }) {
         ) : (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12.5, fontWeight: 700, color: C.slate }}>تصفية حسب حالة الإرسال:</span>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: C.slate }}>تصفية حسب الحالة:</span>
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 10px", fontSize: 12.5 }}>
               <option value="">الكل</option>
-              {SENDING_STATUSES.map((s) => (
-                <option key={s} value={s}>{SENDING_STATUS_LABELS[s]}</option>
+              {MANUAL_LIFECYCLE_STATUSES.map((s) => (
+                <option key={s} value={s}>{LIFECYCLE_STATUS_LABELS[s]}</option>
               ))}
             </select>
           </div>
@@ -451,7 +496,8 @@ export default function AdminCodes({ role }) {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {cvs.map((v) => {
-                const colors = SENDING_STATUS_COLORS[v.sending_status] || SENDING_STATUS_COLORS.pending;
+                const colors = LIFECYCLE_STATUS_COLORS[v.lifecycle_status] || LIFECYCLE_STATUS_COLORS.awaiting_sending;
+                const sourceColors = GENERATION_SOURCE_COLORS[v.generation_source] || GENERATION_SOURCE_COLORS.unknown;
                 const history = historyCache[v.id];
                 const expanded = expandedId === v.id;
                 return (
@@ -466,7 +512,7 @@ export default function AdminCodes({ role }) {
                         )}
                       </div>
                       <span style={{ display: "inline-block", background: colors.bg, color: colors.fg, fontSize: 11.5, fontWeight: 700, borderRadius: 999, padding: "5px 12px", whiteSpace: "nowrap" }}>
-                        {SENDING_STATUS_LABELS[v.sending_status] || v.sending_status}
+                        {LIFECYCLE_STATUS_LABELS[v.lifecycle_status] || v.lifecycle_status}
                       </span>
                     </div>
 
@@ -478,7 +524,14 @@ export default function AdminCodes({ role }) {
                       <Field icon={KeyRound} label="كود الدخول" value={v.code} mono />
                       <Field icon={Sparkles} label="الخدمة المطلوبة" value={v.requested_package} />
                       <Field icon={Languages} label="اللغة" value={v.pdf_language === "en" ? "English" : "العربية"} />
+                      <Field icon={Tag} label="المصدر" value={GENERATION_SOURCE_LABELS[v.generation_source]} />
+                      <Field icon={User} label="المُنشئ" value={creatorLabel(v)} />
                       <Field icon={Clock} label="تاريخ الإنشاء" value={v.generated_at ? new Date(v.generated_at).toLocaleString("ar-SA") : "—"} />
+                    </div>
+                    <div style={{ ...hintStyleAdmin, marginTop: 8 }}>
+                      <span style={{ display: "inline-block", background: sourceColors.bg, color: sourceColors.fg, fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 9px" }}>
+                        {GENERATION_SOURCE_LABELS[v.generation_source]}
+                      </span>
                     </div>
 
                     <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
@@ -487,21 +540,21 @@ export default function AdminCodes({ role }) {
                       </a>
 
                       <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: C.slate, fontWeight: 600 }}>
-                        حالة الإرسال:
+                        الحالة:
                         <select
-                          value={v.sending_status}
+                          value={v.lifecycle_status}
                           disabled={updatingStatusId === v.id}
-                          onChange={(e) => updateSendingStatus(v.id, e.target.value)}
+                          onChange={(e) => updateLifecycleStatus(v.id, e.target.value)}
                           style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12.5, opacity: updatingStatusId === v.id ? 0.6 : 1 }}
                         >
-                          {SENDING_STATUSES.map((s) => (
-                            <option key={s} value={s}>{SENDING_STATUS_LABELS[s]}</option>
+                          {MANUAL_LIFECYCLE_STATUSES.map((s) => (
+                            <option key={s} value={s}>{LIFECYCLE_STATUS_LABELS[s]}</option>
                           ))}
                         </select>
                       </label>
 
                       <button onClick={() => toggleHistory(v.id)} style={btnHistoryToggle}>
-                        {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} سجل الحالة
+                        {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} السجل الزمني
                       </button>
                     </div>
 
@@ -509,24 +562,7 @@ export default function AdminCodes({ role }) {
 
                     {expanded && (
                       <div style={historyBox}>
-                        {history?.loading ? (
-                          <div style={{ fontSize: 12.5, color: C.slate }}>جارٍ التحميل...</div>
-                        ) : history?.error ? (
-                          <div style={{ fontSize: 12.5, color: "#b3261e" }}>{history.error}</div>
-                        ) : !history?.items?.length ? (
-                          <div style={{ fontSize: 12.5, color: C.slate }}>لا يوجد سجل بعد.</div>
-                        ) : (
-                          <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
-                            {history.items.map((h, i) => (
-                              <li key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12.5 }}>
-                                <span style={{ width: 7, height: 7, borderRadius: "50%", background: (SENDING_STATUS_COLORS[h.status] || SENDING_STATUS_COLORS.pending).fg, flexShrink: 0 }} />
-                                <span style={{ fontWeight: 700, color: C.ink }}>{SENDING_STATUS_LABELS[h.status] || h.status}</span>
-                                <span style={{ color: C.slate }}>{new Date(h.changed_at).toLocaleString("ar-SA")}</span>
-                                {h.changed_by && <span style={{ color: C.slate }}>— {h.changed_by}</span>}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
+                        <TimelineList history={history} />
                       </div>
                     )}
                   </div>
@@ -539,6 +575,24 @@ export default function AdminCodes({ role }) {
       </div>
       <style>{`.spin-admin { animation: spin-admin 1s linear infinite; } @keyframes spin-admin { to { transform: rotate(360deg); } }`}</style>
     </div>
+  );
+}
+
+function TimelineList({ history }) {
+  if (history?.loading) return <div style={{ fontSize: 12.5, color: C.slate }}>جارٍ التحميل...</div>;
+  if (history?.error) return <div style={{ fontSize: 12.5, color: "#b3261e" }}>{history.error}</div>;
+  if (!history?.items?.length) return <div style={{ fontSize: 12.5, color: C.slate }}>لا يوجد سجل بعد.</div>;
+  return (
+    <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+      {history.items.map((h, i) => (
+        <li key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12.5, flexWrap: "wrap" }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: (LIFECYCLE_STATUS_COLORS[h.status] || LIFECYCLE_STATUS_COLORS.available).fg, flexShrink: 0 }} />
+          <span style={{ fontWeight: 700, color: C.ink }}>{LIFECYCLE_STATUS_LABELS[h.status] || h.status}</span>
+          <span style={{ color: C.slate }}>{new Date(h.changed_at).toLocaleString("ar-SA")}</span>
+          <span style={{ color: C.slate }}>— {h.changed_by || "تلقائي (النظام)"}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -576,5 +630,3 @@ function tabBtnStyle(active) {
     fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
   };
 }
-const statusBadge = { display: "inline-block", background: "#1a3a5c", color: "#ffffff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 10px" };
-const statusBadgeUsed = { display: "inline-block", background: "#8a8f98", color: "#ffffff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 10px" };

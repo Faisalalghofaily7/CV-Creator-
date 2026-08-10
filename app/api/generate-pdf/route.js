@@ -76,9 +76,9 @@ export async function POST(request) {
     // Read-only pre-check: fails fast on an already-used/unknown code
     // before spending time launching Chromium. The code isn't consumed
     // here — only after the PDF below is actually generated.
-    const [existing] = await sql`SELECT status FROM access_codes WHERE code = ${code}`;
+    const [existing] = await sql`SELECT lifecycle_status FROM access_codes WHERE code = ${code}`;
     timings.precheck = Date.now() - t0;
-    if (!existing || existing.status !== "available") {
+    if (!existing || !["available", "customer_in_progress"].includes(existing.lifecycle_status)) {
       return NextResponse.json({ error: "الكود غير صالح أو تم استخدامه من قبل." }, { status: 409 });
     }
 
@@ -118,20 +118,23 @@ export async function POST(request) {
     // consumed. A single conditional UPDATE both re-checks and consumes it
     // atomically (so a concurrent request for the same code can't double-
     // spend it); if PDF generation had thrown above, we'd never reach here
-    // and the code would stay 'available' for the user to retry. This stays
-    // synchronous (unlike archival below) — it's the single-use guarantee,
-    // it's one cheap query, and it isn't what makes this route slow.
+    // and the code would stay available/customer_in_progress for the user
+    // to retry. This stays synchronous (unlike archival below) — it's the
+    // single-use guarantee, it's one cheap query, and it isn't what makes
+    // this route slow. Reaching 'awaiting_sending' IS what makes the code
+    // single-use from here on — the WHERE guard is the only gate.
     tMark = Date.now();
     const [consumed] = await sql`
       UPDATE access_codes
-      SET status = 'used', used_at = now()
-      WHERE code = ${code} AND status = 'available'
+      SET status = 'used', used_at = now(), lifecycle_status = 'awaiting_sending'
+      WHERE code = ${code} AND lifecycle_status IN ('available', 'customer_in_progress')
       RETURNING id
     `;
     timings.markUsed = Date.now() - tMark;
     if (!consumed) {
       return NextResponse.json({ error: "الكود غير صالح أو تم استخدامه من قبل." }, { status: 409 });
     }
+    await sql`INSERT INTO sending_status_history (access_code_id, status, changed_by) VALUES (${consumed.id}, 'awaiting_sending', NULL)`;
     // The code's session (used to survive page refreshes before export) is
     // done its job now that the code itself is consumed.
     destroySessionsForCode(code);

@@ -65,6 +65,10 @@ export async function POST(request) {
         applicantName: row.name || null,
         applicantPhone: row.phone || null,
         sallaOrderStatus: row.status || null,
+        // This route already requires requireRole: "admin" — single
+        // shared login per role, not per-person accounts.
+        generationSource: "bulk_excel",
+        createdBy: process.env.ADMIN_USERNAME || null,
       });
       generated += 1;
       generatedCodes.push({ code: created.code, sallaOrderNumber: orderNumber, applicantName: row.name || null });

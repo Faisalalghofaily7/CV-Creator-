@@ -12,7 +12,8 @@ export async function GET(request) {
   try {
     const sql = getSql();
     const rows = await sql`
-      SELECT id, code, salla_order_number, applicant_name, applicant_phone, requested_package, status, created_at, used_at
+      SELECT id, code, salla_order_number, applicant_name, applicant_phone, requested_package,
+             lifecycle_status, generation_source, created_by, created_at, used_at
       FROM access_codes
       ORDER BY created_at DESC
     `;
@@ -44,7 +45,17 @@ export async function POST(request) {
       return NextResponse.json({ error: "اسم العميل مطلوب لتوليد الكود." }, { status: 400 });
     }
 
-    const row = await createAccessCode({ sallaOrderNumber, applicantPhone, applicantName, requestedPackage });
+    // This route already requires requireRole: "admin", so the acting
+    // username is always the admin one — there's a single shared login per
+    // role, not per-person accounts.
+    const row = await createAccessCode({
+      sallaOrderNumber,
+      applicantPhone,
+      applicantName,
+      requestedPackage,
+      generationSource: "manual",
+      createdBy: process.env.ADMIN_USERNAME || null,
+    });
     return NextResponse.json({ code: row });
   } catch (err) {
     console.error("Failed to create access code:", err);
