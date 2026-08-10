@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock } from "lucide-react";
+import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock, Upload } from "lucide-react";
 import { SENDING_STATUSES, SENDING_STATUS_LABELS, SENDING_STATUS_COLORS } from "../lib/sendingStatus";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
@@ -39,6 +39,11 @@ export default function AdminCodes({ role }) {
   const [newPhone, setNewPhone] = useState("");
   const [newName, setNewName] = useState("");
   const [newPackage, setNewPackage] = useState("");
+
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [uploadResult, setUploadResult] = useState(null);
 
   const [cvs, setCvs] = useState([]);
   const [loadingCvs, setLoadingCvs] = useState(false);
@@ -139,6 +144,34 @@ export default function AdminCodes({ role }) {
     setTimeout(() => setCopiedCode(""), 1500);
   }
 
+  async function handleBulkUpload() {
+    if (!uploadFile) {
+      setUploadError("الرجاء اختيار ملف Excel (.xlsx) أولاً.");
+      return;
+    }
+    setUploading(true);
+    setUploadError("");
+    setUploadResult(null);
+    try {
+      const body = new FormData();
+      body.append("file", uploadFile);
+      const res = await fetch("/api/admin/bulk-upload", { method: "POST", body });
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر معالجة الملف.");
+      setUploadResult(data);
+      // Refetch rather than fabricate rows client-side — the summary
+      // response only carries the fields needed for the summary itself,
+      // not the full row shape the codes table expects.
+      if (data.generated > 0) loadCodes();
+      setUploadFile(null);
+    } catch (err) {
+      setUploadError(err.message || "تعذّر معالجة الملف.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function updateOrder(id, value) {
     // Optimistic update, reconciled with the server response.
     setCodes((prev) => prev.map((c) => (c.id === id ? { ...c, salla_order_number: value } : c)));
@@ -225,6 +258,9 @@ export default function AdminCodes({ role }) {
               <button onClick={() => setTab("codes")} style={tabBtnStyle(tab === "codes")}>
                 <Sparkles size={15} /> الأكواد
               </button>
+              <button onClick={() => setTab("bulk")} style={tabBtnStyle(tab === "bulk")}>
+                <Upload size={15} /> رفع طلبات سلة
+              </button>
               <button onClick={() => setTab("archive")} style={tabBtnStyle(tab === "archive")}>
                 <Archive size={15} /> أرشيف السير الذاتية
               </button>
@@ -234,6 +270,7 @@ export default function AdminCodes({ role }) {
               <Archive size={16} /> أرشيف السير الذاتية
             </div>
           )}
+          {tab !== "bulk" && (
           <button
             onClick={() => (tab === "archive" ? loadCvs(statusFilter) : loadCodes())}
             disabled={tab === "archive" ? loadingCvs : loadingCodes}
@@ -242,6 +279,7 @@ export default function AdminCodes({ role }) {
           >
             <RefreshCw size={15} className={(tab === "archive" ? loadingCvs : loadingCodes) ? "spin-admin" : ""} /> تحديث
           </button>
+          )}
         </div>
 
         {tab === "codes" && isAdmin ? (
@@ -337,6 +375,60 @@ export default function AdminCodes({ role }) {
           </table>
           </div>
         </div>
+        </>
+        ) : tab === "bulk" && isAdmin ? (
+        <>
+          <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.ink, marginBottom: 6 }}>رفع تقرير طلبات سلة (Excel)</div>
+            <div style={{ ...hintStyleAdmin, marginBottom: 14 }}>
+              يجب أن يحتوي الملف على الأعمدة: "اسم العميل"، "رقم الجوال"، "رقم الطلب"، "حالة الطلب" (صف العناوين أولاً). سيتم توليد كود لكل طلب بحالة "بإنتظار المراجعة" فقط، مع تخطي أي رقم طلب لديه كود بالفعل تلقائياً.
+            </div>
+            <input
+              type="file"
+              accept=".xlsx"
+              onChange={(e) => { setUploadFile(e.target.files?.[0] || null); setUploadError(""); setUploadResult(null); }}
+              style={inputStyle}
+            />
+            <button
+              onClick={handleBulkUpload}
+              disabled={uploading || !uploadFile}
+              style={{ ...btnPrimary, marginTop: 14, opacity: uploading || !uploadFile ? 0.7 : 1 }}
+            >
+              {uploading ? <><Loader2 size={16} className="spin-admin" /> جارٍ المعالجة...</> : <><Upload size={16} /> رفع ومعالجة الملف</>}
+            </button>
+            {uploadError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#b3261e" }}>{uploadError}</div>}
+
+            {uploadResult && (
+              <div style={{ marginTop: 18, background: C.soft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 8 }}>
+                  تمت معالجة {uploadResult.processed} صف — تم توليد {uploadResult.generated} كود جديد — تم تخطي {uploadResult.skippedDuplicate} (موجودة مسبقاً) — {uploadResult.ineligibleStatus} غير مؤهلة (حالة مختلفة)
+                  {uploadResult.invalidRows > 0 ? ` — ${uploadResult.invalidRows} صف بدون رقم طلب` : ""}
+                </div>
+                {uploadResult.generatedCodes?.length > 0 && (
+                  <div style={{ maxHeight: 220, overflowY: "auto", background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 8 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                      <thead>
+                        <tr style={{ background: C.soft }}>
+                          <th style={thStyle}>الكود</th>
+                          <th style={thStyle}>رقم طلب سلة</th>
+                          <th style={thStyle}>اسم العميل</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {uploadResult.generatedCodes.map((g) => (
+                          <tr key={g.code} style={{ borderTop: `1px solid ${C.line}` }}>
+                            <td style={{ ...tdStyle, fontFamily: "monospace", fontWeight: 700 }}>{g.code}</td>
+                            <td style={tdStyle}>{g.sallaOrderNumber}</td>
+                            <td style={tdStyle}>{g.applicantName || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </>
         ) : (
         <>
@@ -462,6 +554,7 @@ function Field({ icon: Icon, label, value, mono }) {
 }
 
 const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #dde4ec", background: "#ffffff", fontSize: 13.5, color: "#3a4a5a", fontFamily: "inherit", boxSizing: "border-box" };
+const hintStyleAdmin = { fontSize: 12, color: "#3a4a5a", lineHeight: 1.7 };
 const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#1a3a5c", color: "#ffffff", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 const btnGhostOnDark = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#ffffff", border: "1px solid #2d5578", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
 const btnIcon = { background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "inline-flex", verticalAlign: "middle" };
