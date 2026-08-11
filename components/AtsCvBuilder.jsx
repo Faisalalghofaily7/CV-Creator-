@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Award, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon, Layers } from "lucide-react";
+import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon, Layers } from "lucide-react";
 import { CV_LABELS } from "../lib/cvLabels";
 
 // Persists in-progress form data across page refreshes. Keyed to the
@@ -180,8 +180,11 @@ const STEPS = [
   { key: "experience", label: "الخبرات", icon: Briefcase },
   { key: "education", label: "التعليم", icon: GraduationCap },
   { key: "skills", label: "المهارات", icon: Wrench },
+  // Achievements, Training Courses, Certifications & Memberships, and any
+  // custom sections all live together in this final step, each keeping its
+  // own heading — grouping the optional/extra content into one step rather
+  // than splitting Certifications off into its own separate tab.
   { key: "extra", label: "أقسام إضافية", icon: Layers },
-  { key: "certs", label: "الشهادات والعضويات", icon: Award },
 ];
 
 export default function AtsCvBuilder({ accessCode }) {
@@ -1757,7 +1760,28 @@ export default function AtsCvBuilder({ accessCode }) {
                 <button onClick={addCourse} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addCourse}</button>
               </div>
 
-              {/* Custom Sections — fully user-defined title + points */}
+              {/* Certifications & Memberships (standalone credentials, distinct from Training Courses) */}
+              <div style={{ marginTop: 24 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: THEME.primary, marginBottom: 4 }}>{L.certsHeading}</div>
+                <div style={hintStyle}>{L.certsSubheading}</div>
+                <div style={{ ...hintStyle, marginBottom: 16 }}>{L.certsHint}</div>
+                {certifications.map((x, i) => (
+                  <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginBottom: 14, background: THEME.card }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>{L.certCard} #{i + 1}</span>
+                      <button onClick={() => rmCert(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                      {field(`cert-${i}-name`, L.certName, x.name, setCert(i, "name"), { ph: "SOCPA" })}
+                      {field(`cert-${i}-issuingBody`, L.certIssuingBody, x.issuingBody, setCert(i, "issuingBody"), {})}
+                    </div>
+                    {selectField(`cert-${i}-date`, L.certDate, x.date, setCert(i, "date"), pastYearOptions)}
+                  </div>
+                ))}
+                <button onClick={addCert} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addCert}</button>
+              </div>
+
+              {/* Custom Sections — fully user-defined title + points, always last */}
               <div style={{ marginTop: 24 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: THEME.primary, marginBottom: 4 }}>{L.customSectionsTitle}</div>
                 <div style={hintStyle}>{L.customSectionsHint}</div>
@@ -1784,29 +1808,6 @@ export default function AtsCvBuilder({ accessCode }) {
                 ))}
                 <button onClick={addCustomSection} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addCustomSection}</button>
               </div>
-            </>
-          )}
-
-          {/* STEP 5 - Certifications & Memberships (standalone credentials, distinct from Training Courses) */}
-          {step === 5 && (
-            <>
-              <SectionTitle>{L.certsHeading}</SectionTitle>
-              <div style={hintStyle}>{L.certsSubheading}</div>
-              <div style={{ ...hintStyle, marginBottom: 16 }}>{L.certsHint}</div>
-              {certifications.map((x, i) => (
-                <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginBottom: 14, background: THEME.card }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: THEME.secondary }}>{L.certCard} #{i + 1}</span>
-                    <button onClick={() => rmCert(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    {field(`cert-${i}-name`, L.certName, x.name, setCert(i, "name"), { ph: "SOCPA" })}
-                    {field(`cert-${i}-issuingBody`, L.certIssuingBody, x.issuingBody, setCert(i, "issuingBody"), {})}
-                  </div>
-                  {selectField(`cert-${i}-date`, L.certDate, x.date, setCert(i, "date"), pastYearOptions)}
-                </div>
-              ))}
-              <button onClick={addCert} style={btnAdd}><Plus size={16} /> {L.addCert}</button>
             </>
           )}
 
