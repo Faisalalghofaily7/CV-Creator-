@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon, Layers } from "lucide-react";
+import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon, Layers, Upload } from "lucide-react";
 import { CV_LABELS } from "../lib/cvLabels";
 
 // Persists in-progress form data across page refreshes. Keyed to the
@@ -147,6 +147,67 @@ function anyExperiencesOverlap(list) {
   return false;
 }
 
+// ── Uploaded-CV extraction → form-state helpers ──────────────────────
+// The server returns plain best-guess strings (e.g. a bare city name), not
+// the form's internal choice/custom split — matching that against the
+// known option lists is simpler and more reliable done here, deterministically,
+// than asking the model to know the exact internal option values. Tries
+// both language lists so e.g. an Arabic CV's city still maps correctly onto
+// an English-mode form's option list (translation-by-lookup, not by AI).
+function matchOption(value, arList, enList, activeList) {
+  const v = String(value || "").trim();
+  if (!v) return { choice: "", custom: "" };
+  const lower = v.toLowerCase();
+  let idx = arList.findIndex((o) => o.toLowerCase() === lower);
+  if (idx === -1) idx = enList.findIndex((o) => o.toLowerCase() === lower);
+  if (idx !== -1 && activeList[idx]) return { choice: activeList[idx], custom: "" };
+  return { choice: OTHER, custom: v };
+}
+
+// Same idea, but for plain (non-"other") dropdowns like language
+// proficiency level, which have no free-text fallback in the UI — an
+// unmatched value is simply left blank for the user to pick themselves.
+function matchExact(value, arList, enList, activeList) {
+  const v = String(value || "").trim();
+  if (!v) return "";
+  const lower = v.toLowerCase();
+  let idx = arList.findIndex((o) => o.toLowerCase() === lower);
+  if (idx === -1) idx = enList.findIndex((o) => o.toLowerCase() === lower);
+  return idx !== -1 && activeList[idx] ? activeList[idx] : "";
+}
+
+function normalizeMonth(v) {
+  const n = parseInt(v, 10);
+  return n >= 1 && n <= 12 ? String(n) : "";
+}
+
+function normalizeYear(v) {
+  const s = String(v ?? "").trim();
+  return /^\d{4}$/.test(s) ? s : "";
+}
+
+// Best-effort only — an unrecognizable phone number is simply left blank
+// for the applicant to enter themselves, same as any other unmatched field.
+function normalizePhone(v) {
+  let digits = String(v || "").replace(/[\s-]/g, "");
+  digits = digits.replace(/^00/, "+");
+  if (/^5\d{8}$/.test(digits)) digits = "0" + digits;
+  return PHONE_RE.test(digits) ? digits : "";
+}
+
+function dedupeTrim(arr) {
+  const seen = new Set();
+  const out = [];
+  (arr || []).forEach((x) => {
+    const v = String(x ?? "").trim();
+    if (v && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  });
+  return out;
+}
+
 // ── Design tokens ──────────────────────────────────────────────
 // "Official HR file" identity: formal black & white / grayscale.
 const C = {
@@ -198,6 +259,15 @@ export default function AtsCvBuilder({ accessCode }) {
   const [downloading, setDownloading] = useState(false);
   const [cvLang, setCvLang] = useState(saved?.cvLang ?? "ar");
   const [langConfirmed, setLangConfirmed] = useState(saved?.langConfirmed ?? false);
+  // Gate shown right after the language screen: upload an existing CV (AI
+  // pre-fills the form below) or start from a blank one. Once true, the
+  // applicant is into the normal step wizard either way — this is a
+  // one-time fork, not a separate flow.
+  const [sourceChosen, setSourceChosen] = useState(saved?.sourceChosen ?? false);
+  const [showUploadPanel, setShowUploadPanel] = useState(false);
+  const [cvFile, setCvFile] = useState(null);
+  const [uploadingCv, setUploadingCv] = useState(false);
+  const [uploadCvError, setUploadCvError] = useState("");
   const [blockedField, setBlockedField] = useState(null);
   // Export confirmation flow: the access code is single-use, so exporting
   // must be an explicit, confirmed action. `exportCompleted` only flips to
@@ -604,12 +674,12 @@ export default function AtsCvBuilder({ accessCode }) {
     if (typeof window === "undefined") return;
     try {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
-        accessCode, step, preview, cvLang, langConfirmed,
+        accessCode, step, preview, cvLang, langConfirmed, sourceChosen,
         form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries,
         courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -698,6 +768,122 @@ export default function AtsCvBuilder({ accessCode }) {
   const techSkillSuggestions = cvLang === "en" ? EN_TECH_SKILLS : AR_TECH_SKILLS;
   const softSkillSuggestions = cvLang === "en" ? EN_SOFT_SKILLS : AR_SOFT_SKILLS;
   const roleOptions = cvLang === "en" ? EN_ROLES : AR_ROLES;
+
+  // Populates the (still-empty) form state from an uploaded CV's extracted
+  // data — every setter below is the exact same one the manual form uses,
+  // so from this point on it's the normal flow: review, edit, per-section
+  // warnings, preview with AI enhancement, export. Anything the extraction
+  // didn't find is simply left at its default (empty), same as a blank form.
+  function applyExtractedData(extracted) {
+    const cityMatch = matchOption(extracted.city, AR_CITIES, EN_CITIES, cityOptions);
+    // Names are never auto-translated/transliterated (same rule as manual
+    // entry) — an Arabic name found while the CV language is English is
+    // left blank for the applicant to type in English themselves.
+    const extractedName = String(extracted.name || "").trim();
+    setForm((f) => ({
+      ...f,
+      name: cvLang === "en" && ARABIC_RE.test(extractedName) ? "" : extractedName,
+      email: String(extracted.email || "").trim(),
+      phone: normalizePhone(extracted.phone),
+      cityChoice: cityMatch.choice,
+      cityCustom: cityMatch.custom,
+      linkedin: String(extracted.linkedin || "").trim(),
+      yearsOfExperience: String(extracted.yearsOfExperience || "").trim(),
+    }));
+
+    if (Array.isArray(extracted.targetRoles) && extracted.targetRoles.length) {
+      setTargetRoles(dedupeTrim(extracted.targetRoles));
+    }
+
+    if (Array.isArray(extracted.experiences) && extracted.experiences.length) {
+      setExperiences(extracted.experiences.map((x) => ({
+        title: String(x.title || "").trim(),
+        employer: String(x.employer || "").trim(),
+        fromMonth: normalizeMonth(x.fromMonth),
+        fromYear: normalizeYear(x.fromYear),
+        toMonth: x.current ? "" : normalizeMonth(x.toMonth),
+        toYear: x.current ? "" : normalizeYear(x.toYear),
+        current: !!x.current,
+        bullets: Array.isArray(x.bullets) ? x.bullets.map((b) => String(b).trim()).filter(Boolean) : [],
+      })));
+    }
+
+    if (Array.isArray(extracted.education) && extracted.education.length) {
+      setEducation(extracted.education.map((x) => {
+        const degreeMatch = matchOption(x.degree, AR_DEGREES, EN_DEGREES, degreeOptions);
+        const majorMatch = matchOption(x.major, AR_MAJORS, EN_MAJORS, majorOptions);
+        const uniMatch = matchOption(x.university, AR_UNIVERSITIES, EN_UNIVERSITIES, universityOptions);
+        return {
+          degreeChoice: degreeMatch.choice, degreeCustom: degreeMatch.custom,
+          specializationChoice: majorMatch.choice, specializationCustom: majorMatch.custom,
+          schoolChoice: uniMatch.choice, schoolCustom: uniMatch.custom,
+          year: normalizeYear(x.year),
+          detail: String(x.gpa || "").trim(),
+          gradProject: String(x.gradProject || "").trim(),
+        };
+      }));
+    }
+
+    if (Array.isArray(extracted.techSkills) && extracted.techSkills.length) setTechSkillTags(dedupeTrim(extracted.techSkills));
+    if (Array.isArray(extracted.softSkills) && extracted.softSkills.length) setSoftSkillTags(dedupeTrim(extracted.softSkills));
+
+    if (Array.isArray(extracted.languages) && extracted.languages.length) {
+      setLanguageEntries(extracted.languages.map((x) => {
+        const langMatch = matchOption(x.name, AR_LANGUAGE_OPTIONS, EN_LANGUAGE_OPTIONS, languageOptions);
+        return { langChoice: langMatch.choice, langCustom: langMatch.custom, level: matchExact(x.level, AR_LEVELS, EN_LEVELS, levelOptions) };
+      }));
+    }
+
+    if (Array.isArray(extracted.achievements) && extracted.achievements.length) setAchievements(dedupeTrim(extracted.achievements));
+
+    if (Array.isArray(extracted.courses) && extracted.courses.length) {
+      setCourses(extracted.courses.map((x) => ({
+        name: String(x.name || "").trim(),
+        hours: String(x.hours || "").trim(),
+        provider: String(x.provider || "").trim(),
+        date: normalizeYear(x.date),
+        hasLicense: false,
+        licenseNumber: "",
+      })));
+    }
+
+    if (Array.isArray(extracted.certifications) && extracted.certifications.length) {
+      setCertifications(extracted.certifications.map((x) => ({
+        name: String(x.name || "").trim(),
+        issuingBody: String(x.issuingBody || "").trim(),
+        date: normalizeYear(x.date),
+      })));
+    }
+
+    if (Array.isArray(extracted.otherSections) && extracted.otherSections.length) {
+      setCustomSections(extracted.otherSections.map((x) => {
+        const title = String(x.title || "").trim();
+        return {
+          title: cvLang === "en" && ARABIC_RE.test(title) ? "" : title,
+          points: Array.isArray(x.points) ? x.points.map((p) => String(p).trim()).filter(Boolean) : [],
+        };
+      }));
+    }
+  }
+
+  async function handleUploadCv() {
+    if (!cvFile) return;
+    setUploadingCv(true);
+    setUploadCvError("");
+    try {
+      const body = new FormData();
+      body.append("file", cvFile);
+      const res = await fetch("/api/extract-cv", { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.data) throw new Error(data.error || "تعذّر استخراج البيانات من الملف.");
+      applyExtractedData(data.data);
+      setSourceChosen(true);
+    } catch (err) {
+      setUploadCvError(err.message || "تعذّر استخراج البيانات من الملف. يمكنك المتابعة وتعبئة النموذج يدوياً.");
+    } finally {
+      setUploadingCv(false);
+    }
+  }
 
   const L = cvLang === "en" ? {
     city: "City", experienceHeading: "Work Experience & Training", expCard: "Experience",
@@ -1240,6 +1426,68 @@ export default function AtsCvBuilder({ accessCode }) {
           </div>
 
           <button onClick={() => confirmLanguage(cvLang)} style={{ ...btnPrimary, width: "100%" }}>متابعة</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─────────── UPLOAD EXISTING CV, OR START FRESH (one-time fork) ───────────
+  if (!sourceChosen) {
+    return (
+      <div dir="rtl" style={{ minHeight: "100vh", background: THEME.pageBg, fontFamily: "'Segoe UI', Tahoma, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ width: "100%", maxWidth: 440, background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 28, boxShadow: "0 1px 3px rgba(20,40,60,.06)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <div style={{ background: THEME.primary, width: 40, height: 40, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Upload size={20} color="#ffffff" />
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: THEME.primary }}>لديك سيرة ذاتية جاهزة؟</div>
+          </div>
+          <div style={{ fontSize: 12.5, color: THEME.text, marginBottom: 20, lineHeight: 1.8 }}>
+            ارفعها لنعبّئ بياناتك تلقائيًا، ثم راجعها وعدّلها كما تشاء — أو ابدأ من نموذج فارغ.
+          </div>
+
+          {!showUploadPanel ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button onClick={() => setShowUploadPanel(true)} style={{ ...btnPrimary, width: "100%" }}>
+                <Upload size={16} /> ارفع سيرتك الذاتية وعبّئ النموذج تلقائيًا
+              </button>
+              <button onClick={() => setSourceChosen(true)} style={{ ...btnGhost, width: "100%", justifyContent: "center" }}>
+                ابدأ من نموذج فارغ
+              </button>
+            </div>
+          ) : (
+            <div>
+              <input
+                type="file"
+                accept=".pdf,.docx"
+                onChange={(e) => { setCvFile(e.target.files?.[0] || null); setUploadCvError(""); }}
+                style={inputStyle}
+              />
+              <div style={{ ...hintStyle, marginBottom: 16 }}>الصيغ المدعومة: PDF أو Word (.docx)، بحد أقصى 4 ميجابايت. البيانات المستخرجة هي مسودة أولية — راجعها وصحّحها قبل التصدير.</div>
+              <button
+                onClick={handleUploadCv}
+                disabled={uploadingCv || !cvFile}
+                style={{ ...btnPrimary, width: "100%", opacity: uploadingCv || !cvFile ? 0.7 : 1 }}
+              >
+                {uploadingCv ? <><Loader2 size={16} className="spin" /> جارٍ استخراج البيانات...</> : "رفع ومتابعة"}
+              </button>
+              {uploadCvError && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={warnStyle}>{uploadCvError}</div>
+                  <button onClick={() => setSourceChosen(true)} style={{ ...btnGhost, width: "100%", justifyContent: "center", marginTop: 8 }}>
+                    المتابعة بنموذج فارغ بدلاً من ذلك
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={() => { setShowUploadPanel(false); setCvFile(null); setUploadCvError(""); }}
+                disabled={uploadingCv}
+                style={{ ...btnGhost, width: "100%", justifyContent: "center", marginTop: 10, opacity: uploadingCv ? 0.5 : 1 }}
+              >
+                رجوع
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
