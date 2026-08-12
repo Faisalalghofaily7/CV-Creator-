@@ -5,7 +5,7 @@ import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, C
 import { LIFECYCLE_STATUSES, MANUAL_LIFECYCLE_STATUSES, LIFECYCLE_STATUS_LABELS, LIFECYCLE_STATUS_COLORS } from "../lib/lifecycleStatus";
 import { GENERATION_SOURCE_LABELS, GENERATION_SOURCE_COLORS, creatorLabel } from "../lib/generationSource";
 import { STAFF_TYPES, STAFF_TYPE_LABELS, PACKAGE_OPTIONS, isValidStaffEmail } from "../lib/staffAccounts";
-import { LINKEDIN_ORDER_STATUSES, LINKEDIN_ORDER_STATUS_LABELS, LINKEDIN_ORDER_STATUS_COLORS } from "../lib/linkedinOrders";
+import { LINKEDIN_ORDER_STATUSES, LINKEDIN_ORDER_STATUS_LABELS, LINKEDIN_ORDER_STATUS_COLORS, parseCompositeOrderId } from "../lib/linkedinOrders";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
@@ -1188,6 +1188,12 @@ function LinkedinPanel({ orders, loading, error, statusFilter, setStatusFilter, 
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                  {o.sourceType === "integrated_cv" && (
+                    <a href={`/api/admin/cvs/${parseCompositeOrderId(o.id)?.id}/pdf`} target="_blank" rel="noreferrer" style={btnViewLink}>
+                      <FileText size={14} /> عرض / تحميل السيرة
+                    </a>
+                  )}
+
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: C.slate, fontWeight: 600 }}>
                     الحالة:
                     <select

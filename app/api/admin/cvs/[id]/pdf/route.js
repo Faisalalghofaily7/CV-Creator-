@@ -3,7 +3,7 @@ import { get } from "@vercel/blob";
 import { getSql } from "../../../../../../lib/db";
 import { assertBlobConfigured } from "../../../../../../lib/blob";
 import { requireAdminApi, getAdminSessionFromRequest } from "../../../../../../lib/adminAuth";
-import { staffCanAccessRecord } from "../../../../../../lib/staffAccounts";
+import { staffCanViewCvPdf } from "../../../../../../lib/staffAccounts";
 
 export const runtime = "nodejs";
 
@@ -27,7 +27,7 @@ export async function GET(request, { params }) {
     if (!row || !row.pdf_url) {
       return NextResponse.json({ error: "لم يتم العثور على ملف محفوظ لهذا السجل." }, { status: 404 });
     }
-    if (!staffCanAccessRecord(session?.staffType, row.requested_package)) {
+    if (!staffCanViewCvPdf(session?.staffType, row.requested_package)) {
       return NextResponse.json({ error: "لا تملك صلاحية الوصول إلى هذا السجل." }, { status: 403 });
     }
 
