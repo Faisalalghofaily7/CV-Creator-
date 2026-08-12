@@ -869,6 +869,7 @@ export default function AdminCodes({ role, staffType }) {
                       <Field icon={Mail} label="البريد الإلكتروني" value={v.applicant_email} copyable />
                       <Field icon={Phone} label="رقم الجوال" value={v.applicant_phone} copyable />
                       <Field icon={MapPin} label="المدينة" value={v.applicant_city} copyable />
+                      <Field icon={Target} label="المدن المستهدفة" value={v.applicant_target_cities} copyable />
                       <Field icon={Hash} label="رقم طلب سلة" value={v.salla_order_number} copyable />
                       <Field icon={KeyRound} label="كود الدخول" value={v.code} mono copyable />
                       <Field icon={Sparkles} label="الخدمة المطلوبة" value={v.requested_package} copyable />
@@ -877,6 +878,12 @@ export default function AdminCodes({ role, staffType }) {
                       <Field icon={User} label="المُنشئ" value={creatorLabel(v)} />
                       <Field icon={Clock} label="تاريخ الإنشاء" value={v.generated_at ? new Date(v.generated_at).toLocaleString("ar-SA") : "—"} />
                     </div>
+                    {v.applicant_internal_notes && (
+                      <div style={{ marginTop: 8, display: "flex", alignItems: "flex-start", gap: 6, fontSize: 12.5, color: "#8a6100", background: "#fff3cd", border: "1px solid #ffe08a", borderRadius: 8, padding: "10px 12px" }}>
+                        <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                        <span><strong>ملاحظة داخلية:</strong> {v.applicant_internal_notes}</span>
+                      </div>
+                    )}
                     <div style={{ ...hintStyleAdmin, marginTop: 8 }}>
                       <span style={{ display: "inline-block", background: sourceColors.bg, color: sourceColors.fg, fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 9px" }}>
                         {GENERATION_SOURCE_LABELS[v.generation_source]}

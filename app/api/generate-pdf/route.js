@@ -157,6 +157,8 @@ export async function POST(request) {
         applicantPhone: form?.phone,
         applicantCity: form?.city,
         applicantTargetRole: form?.targetRoles,
+        applicantTargetCities: form?.targetCities,
+        applicantInternalNotes: form?.internalNotes,
         lang,
       }).then(() => {
         console.log(`[generate-pdf] archive took ${Date.now() - archiveStart}ms (background)`);

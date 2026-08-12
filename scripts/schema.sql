@@ -233,3 +233,12 @@ ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS linkedin_notification_status T
   CHECK (linkedin_notification_status IS NULL OR linkedin_notification_status IN ('sent', 'failed', 'no_recipient'));
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS linkedin_notified_email TEXT;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS linkedin_notified_at TIMESTAMPTZ;
+
+-- Target cities + internal staff notes, captured at CV-export time
+-- (same as applicant_email/city/target_role above) — staff-facing only,
+-- never rendered into the CV PDF. applicant_target_cities is a plain
+-- display-ready joined string (the multi-select's resolved values,
+-- including any typed-in "Other" city); applicant_internal_notes is raw
+-- free text the applicant wrote, never touched by AI.
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_target_cities TEXT;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_internal_notes TEXT;

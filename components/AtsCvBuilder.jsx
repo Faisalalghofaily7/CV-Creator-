@@ -55,6 +55,14 @@ const EN_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep"
 const AR_CITIES = ["الرياض", "جدة", "مكة المكرمة", "المدينة المنورة", "الدمام", "الخبر", "الظهران", "القصيم/بريدة", "عنيزة", "الطائف", "تبوك", "أبها", "خميس مشيط", "حائل", "نجران", "جازان", "الأحساء", "الجبيل", "ينبع", "الخرج"];
 const EN_CITIES = ["Riyadh", "Jeddah", "Makkah", "Madinah", "Dammam", "Khobar", "Dhahran", "Buraidah (Qassim)", "Unaizah", "Taif", "Tabuk", "Abha", "Khamis Mushait", "Hail", "Najran", "Jazan", "Al-Ahsa", "Jubail", "Yanbu", "Al-Kharj"];
 
+// Separate list for the "target cities" multi-select (Change 1) — a
+// deliberately different, staff-specified set from AR_CITIES/EN_CITIES
+// above (which is only for the single "resides in" field and already has
+// its own tested extraction-matching behavior); keeping them independent
+// avoids touching that unrelated field's option list.
+const AR_TARGET_CITIES = ["الرياض", "جدة", "مكة المكرمة", "المدينة المنورة", "الدمام", "الخبر", "الظهران", "القصيم (بريدة/عنيزة)", "الطائف", "تبوك", "أبها", "خميس مشيط", "حائل", "نجران", "جازان", "الجبيل", "ينبع", "الأحساء (الهفوف)", "عرعر", "سكاكا", "الباحة"];
+const EN_TARGET_CITIES = ["Riyadh", "Jeddah", "Makkah", "Madinah", "Dammam", "Khobar", "Dhahran", "Qassim (Buraidah/Unaizah)", "Taif", "Tabuk", "Abha", "Khamis Mushait", "Hail", "Najran", "Jazan", "Jubail", "Yanbu", "Al-Ahsa (Hofuf)", "Arar", "Sakaka", "Al-Baha"];
+
 const AR_DEGREES = ["الثانوية العامة", "دبلوم", "بكالوريوس", "ماجستير", "دكتوراه", "زمالة"];
 const EN_DEGREES = ["High School", "Diploma", "Bachelor's", "Master's", "PhD", "Fellowship"];
 
@@ -417,6 +425,59 @@ export default function AtsCvBuilder({ accessCode }) {
     );
   }
 
+  // Multi-select dropdown: checkbox per option, selections shown as
+  // removable chips, plus an "Other/أخرى" checkbox that reveals a single
+  // free-text field (same OTHER-reveal pattern as selectWithOther above,
+  // just for more than one selection at once).
+  function multiSelectWithOther(id, label, selected, setSelected, custom, onCustomChange, options, opts = {}) {
+    const isOpen = openDropdown === id;
+    const hasOther = selected.includes(OTHER);
+    const toggle = (value) => setSelected((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
+    return (
+      <div style={{ marginBottom: 14, position: "relative" }}>
+        <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#1a3a5c" }}>*</span>}</label>
+        <div
+          tabIndex={0}
+          onClick={() => setOpenDropdown((cur) => (cur === id ? null : id))}
+          onBlur={() => setTimeout(() => setOpenDropdown((cur) => (cur === id ? null : cur)), 150)}
+          style={{ ...inputStyle, display: "flex", flexWrap: "wrap", gap: 6, minHeight: 44, alignItems: "center", cursor: "pointer" }}
+        >
+          {selected.length === 0 && <span style={{ color: "#8a97a5", fontSize: 13.5 }}>{opts.ph || (cvLang === "en" ? "Select..." : "اختر...")}</span>}
+          {selected.map((v) => (
+            <span key={v} style={chipStyle}>
+              {v === OTHER ? (cvLang === "en" ? "Other" : "أخرى") : v}
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); toggle(v); }} style={chipRemoveStyle} aria-label="remove">×</button>
+            </span>
+          ))}
+        </div>
+        {isOpen && (
+          <div style={dropdownListStyle}>
+            {options.map((o) => (
+              <div key={o} onMouseDown={(e) => { e.preventDefault(); toggle(o); }} style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={selected.includes(o)} readOnly style={{ pointerEvents: "none", accentColor: THEME.primary }} />
+                {o}
+              </div>
+            ))}
+            <div onMouseDown={(e) => { e.preventDefault(); toggle(OTHER); }} style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8, fontWeight: 700, color: THEME.primary, borderBottom: "none" }}>
+              <input type="checkbox" checked={hasOther} readOnly style={{ pointerEvents: "none", accentColor: THEME.primary }} />
+              {cvLang === "en" ? "Other" : "أخرى"}
+            </div>
+          </div>
+        )}
+        {hasOther && (
+          <input
+            value={custom}
+            onChange={(e) => onCustomChange(guardLangInput(id, e.target.value))}
+            placeholder={cvLang === "en" ? "Type here" : "اكتب هنا"}
+            style={{ ...inputStyle, marginTop: 8 }}
+          />
+        )}
+        {hasOther && blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
+      </div>
+    );
+  }
+
   // Text input with a filterable dropdown of suggestions, plus the same
   // "Other" free-text fallback as selectWithOther — used where the option
   // list is too long to scroll comfortably as a plain <select> (e.g.
@@ -643,6 +704,16 @@ export default function AtsCvBuilder({ accessCode }) {
   // Target role(s) — collected/stored for future matching features but,
   // per product decision, never rendered into the generated CV/PDF.
   const [targetRoles, setTargetRoles] = useState(saved?.targetRoles ?? []);
+  // Target cities — same "never rendered into the PDF" rule as target
+  // roles: purely for staff to know how many companies/where to reach on
+  // the applicant's behalf. targetCitiesOther only matters when the
+  // "أخرى/Other" entry is included in targetCities.
+  const [targetCities, setTargetCities] = useState(saved?.targetCities ?? []);
+  const [targetCitiesOther, setTargetCitiesOther] = useState(saved?.targetCitiesOther ?? "");
+  // Free-text internal instructions for staff (e.g. "don't send my CV to
+  // company X") — never sent through AI, never rendered into the PDF,
+  // visible only in the admin/Staff1 panels.
+  const [internalNotes, setInternalNotes] = useState(saved?.internalNotes ?? "");
 
   const [experiences, setExperiences] = useState(saved?.experiences ?? [
     { title: "", employer: "", fromMonth: "", fromYear: "", toMonth: "", toYear: "", current: false, bullets: [] },
@@ -675,11 +746,11 @@ export default function AtsCvBuilder({ accessCode }) {
     try {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed, sourceChosen,
-        form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries,
+        form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries,
         courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -753,6 +824,7 @@ export default function AtsCvBuilder({ accessCode }) {
   // ── Bilingual option lists + labels for the new controls ──
   const sep = cvLang === "en" ? ", " : "، ";
   const cityOptions = cvLang === "en" ? EN_CITIES : AR_CITIES;
+  const targetCitiesOptions = cvLang === "en" ? EN_TARGET_CITIES : AR_TARGET_CITIES;
   const degreeOptions = cvLang === "en" ? EN_DEGREES : AR_DEGREES;
   const universityOptions = cvLang === "en" ? EN_UNIVERSITIES : AR_UNIVERSITIES;
   const majorOptions = cvLang === "en" ? EN_MAJORS : AR_MAJORS;
@@ -918,6 +990,12 @@ export default function AtsCvBuilder({ accessCode }) {
     targetRolesLabel: "Target Role(s)",
     targetRolesPh: "Search or select a role...",
     targetRolesHint: "You can select more than one, or add your own. Used to tailor your experience — it will not appear in the PDF.",
+    targetCitiesLabel: "Target Cities",
+    targetCitiesPh: "Select one or more cities...",
+    targetCitiesHint: "These help us reach the companies you're targeting — the cities you choose determine how many companies we can reach on your behalf. Not shown on the CV PDF.",
+    internalNotesLabel: "Internal Notes (optional)",
+    internalNotesPh: "e.g. Please don't send my CV to my current company at jobs@xxx.sa",
+    internalNotesHint: "For our staff only — never processed by AI and never shown on the CV PDF.",
     certsHeading: "Certifications & Memberships", certsSubheading: "Standalone professional certifications and memberships (not training courses).",
     certsHint: "Optional — e.g. SOCPA, CMA, or a professional membership.",
     certCard: "Certification / Membership", certName: "Certification / Membership Name",
@@ -960,6 +1038,12 @@ export default function AtsCvBuilder({ accessCode }) {
     targetRolesLabel: "الوظيفة/الوظائف المستهدفة",
     targetRolesPh: "ابحث أو اختر وظيفة...",
     targetRolesHint: "يمكنك اختيار أكثر من وظيفة، أو إضافة وظيفة غير موجودة بالقائمة. تُستخدم لتخصيص تجربتك فقط — لن تظهر في ملف الـ PDF.",
+    targetCitiesLabel: "المدن المستهدفة",
+    targetCitiesPh: "اختر مدينة واحدة أو أكثر...",
+    targetCitiesHint: "يساعدنا اختيارك في الوصول إلى الشركات التي تستهدفها — عدد الشركات التي يمكننا التواصل معها نيابةً عنك يتحدد بناءً على اختيارك هنا. لن تظهر في ملف الـ PDF.",
+    internalNotesLabel: "ملاحظات داخلية (اختياري)",
+    internalNotesPh: "مثال: الرجاء عدم إرسال سيرتي الذاتية لشركتي الحالية على jobs@xxx.sa",
+    internalNotesHint: "لفريقنا فقط — لا تتم معالجتها بالذكاء الاصطناعي، ولن تظهر في ملف الـ PDF.",
     certsHeading: "الشهادات والعضويات المهنية", certsSubheading: "شهادات وعضويات مهنية مستقلة (وليست دورات تدريبية).",
     certsHint: "اختياري — مثل SOCPA أو CMA أو عضوية مهنية.",
     certCard: "شهادة / عضوية", certName: "اسم الشهادة / العضوية",
@@ -1052,6 +1136,13 @@ export default function AtsCvBuilder({ accessCode }) {
 
   const techSkillsStr = techSkillTags.join(sep);
   const softSkillsStr = softSkillTags.join(sep);
+  // "أخرى/Other" resolves to its typed-in custom text; never rendered into
+  // the PDF (see form.targetCities below) — only shown in the admin/Staff1
+  // panels, same treatment as targetRoles.
+  const targetCitiesStr = targetCities
+    .map((c) => (c === OTHER ? (targetCitiesOther.trim() ? `${cvLang === "en" ? "Other: " : "أخرى: "}${targetCitiesOther.trim()}` : "") : c))
+    .filter(Boolean)
+    .join(sep);
   const languagesStr = languageEntries
     .filter((l) => (l.langChoice === OTHER ? l.langCustom.trim() : l.langChoice))
     .map((l) => {
@@ -1086,6 +1177,10 @@ export default function AtsCvBuilder({ accessCode }) {
             // Collected for future AI/matching features, but the PDF
             // template no longer renders these into the CV output.
             targetRoles: targetRoles.join(sep),
+            // Staff-only, never on the PDF (see lib/cvArchive.js /
+            // lib/cvHtmlTemplate.js — neither one renders these).
+            targetCities: targetCitiesStr,
+            internalNotes,
             yearsOfExperience: form.yearsOfExperience,
             linkedin: form.linkedin,
             summary: form.summary,
@@ -1494,6 +1589,7 @@ export default function AtsCvBuilder({ accessCode }) {
             </div>
           )}
         </div>
+        <style>{`.spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -1800,6 +1896,8 @@ export default function AtsCvBuilder({ accessCode }) {
               {useAltCvPhone && field("displayPhone", L.altPhoneLabel, form.displayPhone, set("displayPhone"), { ph: "+9665xxxxxxxx", hint: "يظهر في السيرة الذاتية بدلاً من رقم الجوال أعلاه." })}
 
               {tagsInput("targetRoles", `${L.targetRolesLabel} *`, targetRoles, setTargetRoles, { ph: L.targetRolesPh, hint: L.targetRolesHint, suggestions: roleOptions })}
+              {multiSelectWithOther("targetCities", L.targetCitiesLabel, targetCities, setTargetCities, targetCitiesOther, setTargetCitiesOther, targetCitiesOptions, { ph: L.targetCitiesPh, hint: L.targetCitiesHint })}
+              {fieldArea("internalNotes", L.internalNotesLabel, internalNotes, (e) => setInternalNotes(e.target.value), { ph: L.internalNotesPh, hint: L.internalNotesHint, rows: 3 })}
               <div style={{ marginBottom: 14 }}>
                 <label style={labelStyle}>{t.summary}</label>
                 <div style={{ background: THEME.soft, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "12px 14px", fontSize: 13, color: THEME.text, lineHeight: 1.8 }}>
