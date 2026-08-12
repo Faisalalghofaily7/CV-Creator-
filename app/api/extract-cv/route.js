@@ -97,7 +97,11 @@ export async function POST(request) {
     const client = getAnthropicClient();
     const message = await client.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 4096,
+      // A detailed, multi-role real-world CV can easily need several
+      // thousand output tokens for its JSON — 4096 was cutting genuine CVs
+      // off mid-string (truncated/invalid JSON). This is comfortably above
+      // what even a long, senior-level CV should require.
+      max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: messageContent }],
     });
@@ -109,7 +113,12 @@ export async function POST(request) {
     try {
       data = JSON.parse(jsonText);
     } catch (err) {
-      console.error("Failed to parse CV extraction JSON:", err, "raw (first 500 chars):", raw.slice(0, 500));
+      console.error(
+        "Failed to parse CV extraction JSON:", err,
+        "stop_reason:", message.stop_reason,
+        "raw length:", raw.length,
+        "raw (first 500 chars):", raw.slice(0, 500)
+      );
       return NextResponse.json({ error: "تعذّر قراءة بيانات السيرة الذاتية تلقائياً من الملف. يمكنك المتابعة وتعبئة النموذج يدوياً." }, { status: 502 });
     }
 
