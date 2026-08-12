@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock, Upload, Tag, User } from "lucide-react";
+import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock, Upload, Tag, User, Users, UserPlus, Power, Trash2, Lock, AlertTriangle } from "lucide-react";
 import { LIFECYCLE_STATUSES, MANUAL_LIFECYCLE_STATUSES, LIFECYCLE_STATUS_LABELS, LIFECYCLE_STATUS_COLORS } from "../lib/lifecycleStatus";
 import { GENERATION_SOURCE_LABELS, GENERATION_SOURCE_COLORS, creatorLabel } from "../lib/generationSource";
+import { STAFF_TYPES, STAFF_TYPE_LABELS } from "../lib/staffAccounts";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
@@ -56,6 +57,20 @@ export default function AdminCodes({ role }) {
   const [expandedId, setExpandedId] = useState(null);
   const [historyCache, setHistoryCache] = useState({});
 
+  const [staffList, setStaffList] = useState([]);
+  const [loadingStaff, setLoadingStaff] = useState(false);
+  const [staffError, setStaffError] = useState("");
+  const [newStaffUsername, setNewStaffUsername] = useState("");
+  const [newStaffDisplayName, setNewStaffDisplayName] = useState("");
+  const [newStaffPassword, setNewStaffPassword] = useState("");
+  const [newStaffType, setNewStaffType] = useState(STAFF_TYPES[0]);
+  const [creatingStaff, setCreatingStaff] = useState(false);
+  const [createStaffError, setCreateStaffError] = useState("");
+  const [staffRowErrors, setStaffRowErrors] = useState({});
+  const [savingStaffId, setSavingStaffId] = useState(null);
+  const [resetPasswordDrafts, setResetPasswordDrafts] = useState({});
+  const [deleteWarning, setDeleteWarning] = useState(null); // { id, historyCount, message } | null
+
   async function loadCodes() {
     setLoadingCodes(true);
     setLoadError("");
@@ -96,6 +111,26 @@ export default function AdminCodes({ role }) {
   useEffect(() => {
     if (tab === "archive") loadCvs(statusFilter);
   }, [tab, statusFilter]);
+
+  async function loadStaff() {
+    setLoadingStaff(true);
+    setStaffError("");
+    try {
+      const res = await fetch("/api/admin/staff");
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر تحميل قائمة الموظفين.");
+      setStaffList(data.staff || []);
+    } catch (err) {
+      setStaffError(err.message || "تعذّر تحميل قائمة الموظفين.");
+    } finally {
+      setLoadingStaff(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "staff" && isAdmin) loadStaff();
+  }, [tab, isAdmin]);
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -240,6 +275,96 @@ export default function AdminCodes({ role }) {
     if (!historyCache[id]) loadHistory(id);
   }
 
+  const canCreateStaff = newStaffUsername.trim() !== "" && newStaffDisplayName.trim() !== "" && newStaffPassword.length >= 8;
+
+  async function handleCreateStaff() {
+    if (!canCreateStaff) {
+      setCreateStaffError("اسم المستخدم والاسم مطلوبان، وكلمة المرور 8 أحرف على الأقل.");
+      return;
+    }
+    setCreatingStaff(true);
+    setCreateStaffError("");
+    try {
+      const res = await fetch("/api/admin/staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: newStaffUsername.trim(),
+          displayName: newStaffDisplayName.trim(),
+          password: newStaffPassword,
+          staffType: newStaffType,
+        }),
+      });
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر إنشاء حساب الموظف.");
+      setStaffList((prev) => [data.staff, ...prev]);
+      setNewStaffUsername("");
+      setNewStaffDisplayName("");
+      setNewStaffPassword("");
+      setNewStaffType(STAFF_TYPES[0]);
+    } catch (err) {
+      setCreateStaffError(err.message || "تعذّر إنشاء حساب الموظف.");
+    } finally {
+      setCreatingStaff(false);
+    }
+  }
+
+  // Shared by inline field edits, type change, deactivate/reactivate, and
+  // password reset — all are just a partial PATCH of one staff account.
+  async function patchStaff(id, patch) {
+    setSavingStaffId(id);
+    setStaffRowErrors((prev) => ({ ...prev, [id]: "" }));
+    try {
+      const res = await fetch(`/api/admin/staff/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر الحفظ.");
+      setStaffList((prev) => prev.map((s) => (s.id === id ? data.staff : s)));
+      return true;
+    } catch (err) {
+      setStaffRowErrors((prev) => ({ ...prev, [id]: err.message || "تعذّر الحفظ." }));
+      return false;
+    } finally {
+      setSavingStaffId(null);
+    }
+  }
+
+  async function handleResetPassword(id) {
+    const newPassword = resetPasswordDrafts[id]?.value || "";
+    if (newPassword.length < 8) {
+      setStaffRowErrors((prev) => ({ ...prev, [id]: "كلمة المرور يجب أن تكون 8 أحرف على الأقل." }));
+      return;
+    }
+    const ok = await patchStaff(id, { newPassword });
+    if (ok) setResetPasswordDrafts((prev) => ({ ...prev, [id]: { open: false, value: "" } }));
+  }
+
+  async function handleDeleteStaff(id, force) {
+    setSavingStaffId(id);
+    setStaffRowErrors((prev) => ({ ...prev, [id]: "" }));
+    try {
+      const res = await fetch(`/api/admin/staff/${id}${force ? "?force=true" : ""}`, { method: "DELETE" });
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data.warning) {
+        setDeleteWarning({ id, historyCount: data.historyCount, message: data.error });
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || "تعذّر حذف الحساب.");
+      setStaffList((prev) => prev.filter((s) => s.id !== id));
+      setDeleteWarning(null);
+    } catch (err) {
+      setStaffRowErrors((prev) => ({ ...prev, [id]: err.message || "تعذّر حذف الحساب." }));
+    } finally {
+      setSavingStaffId(null);
+    }
+  }
+
   return (
     <div dir="rtl" style={{ minHeight: "100vh", background: C.paper, fontFamily: "'Segoe UI', Tahoma, sans-serif", color: C.ink }}>
       <div style={{ background: C.ink, padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -266,6 +391,9 @@ export default function AdminCodes({ role }) {
               <button onClick={() => setTab("archive")} style={tabBtnStyle(tab === "archive")}>
                 <Archive size={15} /> أرشيف السير الذاتية
               </button>
+              <button onClick={() => setTab("staff")} style={tabBtnStyle(tab === "staff")}>
+                <Users size={15} /> الموظفون
+              </button>
             </div>
           ) : (
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: C.ink }}>
@@ -274,12 +402,12 @@ export default function AdminCodes({ role }) {
           )}
           {tab !== "bulk" && (
           <button
-            onClick={() => (tab === "archive" ? loadCvs(statusFilter) : loadCodes())}
-            disabled={tab === "archive" ? loadingCvs : loadingCodes}
+            onClick={() => (tab === "archive" ? loadCvs(statusFilter) : tab === "staff" ? loadStaff() : loadCodes())}
+            disabled={tab === "archive" ? loadingCvs : tab === "staff" ? loadingStaff : loadingCodes}
             style={tabBtnStyle(false)}
             title="تحديث القائمة — البيانات لا تتحدث تلقائيًا إذا تغيّرت من جلسة أخرى"
           >
-            <RefreshCw size={15} className={(tab === "archive" ? loadingCvs : loadingCodes) ? "spin-admin" : ""} /> تحديث
+            <RefreshCw size={15} className={(tab === "archive" ? loadingCvs : tab === "staff" ? loadingStaff : loadingCodes) ? "spin-admin" : ""} /> تحديث
           </button>
           )}
         </div>
@@ -475,6 +603,27 @@ export default function AdminCodes({ role }) {
             )}
           </div>
         </>
+        ) : tab === "staff" && isAdmin ? (
+        <StaffManagement
+          staffList={staffList}
+          loadingStaff={loadingStaff}
+          staffError={staffError}
+          newStaffUsername={newStaffUsername} setNewStaffUsername={setNewStaffUsername}
+          newStaffDisplayName={newStaffDisplayName} setNewStaffDisplayName={setNewStaffDisplayName}
+          newStaffPassword={newStaffPassword} setNewStaffPassword={setNewStaffPassword}
+          newStaffType={newStaffType} setNewStaffType={setNewStaffType}
+          creatingStaff={creatingStaff}
+          createStaffError={createStaffError}
+          canCreateStaff={canCreateStaff}
+          handleCreateStaff={handleCreateStaff}
+          patchStaff={patchStaff}
+          savingStaffId={savingStaffId}
+          staffRowErrors={staffRowErrors}
+          resetPasswordDrafts={resetPasswordDrafts} setResetPasswordDrafts={setResetPasswordDrafts}
+          handleResetPassword={handleResetPassword}
+          deleteWarning={deleteWarning} setDeleteWarning={setDeleteWarning}
+          handleDeleteStaff={handleDeleteStaff}
+        />
         ) : (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
@@ -574,6 +723,192 @@ export default function AdminCodes({ role }) {
         )}
       </div>
       <style>{`.spin-admin { animation: spin-admin 1s linear infinite; } @keyframes spin-admin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+function StaffManagement({
+  staffList, loadingStaff, staffError,
+  newStaffUsername, setNewStaffUsername,
+  newStaffDisplayName, setNewStaffDisplayName,
+  newStaffPassword, setNewStaffPassword,
+  newStaffType, setNewStaffType,
+  creatingStaff, createStaffError, canCreateStaff, handleCreateStaff,
+  patchStaff, savingStaffId, staffRowErrors,
+  resetPasswordDrafts, setResetPasswordDrafts, handleResetPassword,
+  deleteWarning, setDeleteWarning, handleDeleteStaff,
+}) {
+  return (
+    <>
+      <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: C.ink, marginBottom: 14 }}>إضافة موظف جديد</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 14 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 700, color: C.slate }}>
+            اسم الموظف *
+            <input value={newStaffDisplayName} onChange={(e) => setNewStaffDisplayName(e.target.value)} placeholder="مثال: سارة العتيبي" style={inputStyle} />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 700, color: C.slate }}>
+            اسم المستخدم *
+            <input value={newStaffUsername} onChange={(e) => setNewStaffUsername(e.target.value)} placeholder="مثال: sara.staff" style={inputStyle} />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 700, color: C.slate }}>
+            كلمة المرور *
+            <input type="password" value={newStaffPassword} onChange={(e) => setNewStaffPassword(e.target.value)} placeholder="8 أحرف على الأقل" style={inputStyle} />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 700, color: C.slate }}>
+            نوع الموظف *
+            <select value={newStaffType} onChange={(e) => setNewStaffType(e.target.value)} style={inputStyle}>
+              {STAFF_TYPES.map((t) => (
+                <option key={t} value={t}>{STAFF_TYPE_LABELS[t]}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <button onClick={handleCreateStaff} disabled={creatingStaff || !canCreateStaff} style={{ ...btnPrimary, opacity: creatingStaff || !canCreateStaff ? 0.7 : 1 }}>
+          {creatingStaff ? <><Loader2 size={16} className="spin-admin" /> جارٍ الإنشاء...</> : <><UserPlus size={16} /> إنشاء حساب موظف</>}
+        </button>
+        {createStaffError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#b3261e" }}>{createStaffError}</div>}
+      </div>
+
+      {loadingStaff ? (
+        <div style={emptyStateBox}>جارٍ التحميل...</div>
+      ) : staffError ? (
+        <div style={{ ...emptyStateBox, color: "#b3261e" }}>{staffError}</div>
+      ) : staffList.length === 0 ? (
+        <div style={emptyStateBox}>لا يوجد موظفون بعد — أضف أول حساب موظف أعلاه.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {staffList.map((s) => (
+            <StaffRow
+              key={s.id}
+              staff={s}
+              saving={savingStaffId === s.id}
+              rowError={staffRowErrors[s.id]}
+              patchStaff={patchStaff}
+              resetDraft={resetPasswordDrafts[s.id]}
+              setResetDraft={(draft) => setResetPasswordDrafts((prev) => ({ ...prev, [s.id]: draft }))}
+              handleResetPassword={handleResetPassword}
+              deleteWarning={deleteWarning?.id === s.id ? deleteWarning : null}
+              clearDeleteWarning={() => setDeleteWarning(null)}
+              handleDeleteStaff={handleDeleteStaff}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function StaffRow({ staff, saving, rowError, patchStaff, resetDraft, setResetDraft, handleResetPassword, deleteWarning, clearDeleteWarning, handleDeleteStaff }) {
+  const [username, setUsername] = useState(staff.username);
+  const [displayName, setDisplayName] = useState(staff.display_name);
+
+  return (
+    <div style={archiveCard}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.ink }}>{staff.display_name}</div>
+          <span style={{ display: "inline-block", background: staff.active ? "#e6f4ea" : "#fdecea", color: staff.active ? "#1e7d34" : "#b3261e", fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" }}>
+            {staff.active ? "نشط" : "معطّل"}
+          </span>
+        </div>
+        <span style={{ display: "inline-block", background: C.soft, color: C.ink, fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 9px", whiteSpace: "nowrap" }}>
+          {STAFF_TYPE_LABELS[staff.staff_type] || staff.staff_type}
+        </span>
+      </div>
+
+      <div style={fieldGrid}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 11, color: C.slate, fontWeight: 600 }}>
+          الاسم
+          <input
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            onBlur={() => displayName.trim() && displayName !== staff.display_name && patchStaff(staff.id, { displayName: displayName.trim() })}
+            style={{ ...inputStyle, padding: "6px 8px", fontSize: 12.5 }}
+          />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 11, color: C.slate, fontWeight: 600 }}>
+          اسم المستخدم
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            onBlur={() => username.trim() && username !== staff.username && patchStaff(staff.id, { username: username.trim() })}
+            style={{ ...inputStyle, padding: "6px 8px", fontSize: 12.5, fontFamily: "monospace" }}
+          />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 11, color: C.slate, fontWeight: 600 }}>
+          نوع الموظف
+          <select
+            value={staff.staff_type}
+            onChange={(e) => patchStaff(staff.id, { staffType: e.target.value })}
+            style={{ ...inputStyle, padding: "6px 8px", fontSize: 12.5 }}
+          >
+            {STAFF_TYPES.map((t) => (
+              <option key={t} value={t}>{STAFF_TYPE_LABELS[t]}</option>
+            ))}
+          </select>
+        </label>
+        <Field icon={Clock} label="تاريخ الإنشاء" value={new Date(staff.created_at).toLocaleString("ar-SA")} />
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+        <button
+          onClick={() => setResetDraft({ open: !resetDraft?.open, value: "" })}
+          style={btnHistoryToggle}
+        >
+          <Lock size={14} /> إعادة تعيين كلمة المرور
+        </button>
+
+        <button
+          onClick={() => patchStaff(staff.id, { active: !staff.active })}
+          disabled={saving}
+          style={{ ...btnHistoryToggle, opacity: saving ? 0.6 : 1 }}
+        >
+          <Power size={14} /> {staff.active ? "تعطيل الحساب" : "إعادة تفعيل الحساب"}
+        </button>
+
+        <button
+          onClick={() => handleDeleteStaff(staff.id, false)}
+          disabled={saving}
+          style={{ ...btnHistoryToggle, color: "#b3261e", borderColor: "#f3c9c4", opacity: saving ? 0.6 : 1 }}
+        >
+          <Trash2 size={14} /> حذف الحساب
+        </button>
+      </div>
+
+      {resetDraft?.open && (
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <input
+            type="password"
+            value={resetDraft.value}
+            onChange={(e) => setResetDraft({ open: true, value: e.target.value })}
+            placeholder="كلمة مرور جديدة (8 أحرف على الأقل)"
+            style={{ ...inputStyle, width: "auto", flex: "1 1 220px", padding: "8px 10px", fontSize: 12.5 }}
+          />
+          <button onClick={() => handleResetPassword(staff.id)} disabled={saving} style={{ ...btnPrimary, padding: "8px 16px", fontSize: 12.5, opacity: saving ? 0.7 : 1 }}>
+            حفظ كلمة المرور
+          </button>
+        </div>
+      )}
+
+      {deleteWarning && (
+        <div style={{ marginTop: 12, background: "#fdecea", border: "1px solid #f3c9c4", borderRadius: 8, padding: "12px 14px" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: "#8a2e24", lineHeight: 1.7 }}>
+            <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>{deleteWarning.message}</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button onClick={() => handleDeleteStaff(staff.id, true)} disabled={saving} style={{ ...btnPrimary, background: "#b3261e", padding: "8px 16px", fontSize: 12.5, opacity: saving ? 0.7 : 1 }}>
+              نعم، احذف نهائياً
+            </button>
+            <button onClick={clearDeleteWarning} style={{ ...btnHistoryToggle, padding: "8px 16px" }}>
+              إلغاء (تعطيل بدلاً من ذلك)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {rowError && <div style={{ marginTop: 8, fontSize: 12, color: "#b3261e" }}>{rowError}</div>}
     </div>
   );
 }

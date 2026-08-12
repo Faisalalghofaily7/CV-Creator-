@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { get } from "@vercel/blob";
 import { getSql } from "../../../../../../lib/db";
 import { assertBlobConfigured } from "../../../../../../lib/blob";
-import { requireAdminApi } from "../../../../../../lib/adminAuth";
+import { requireAdminApi, getAdminSessionFromRequest } from "../../../../../../lib/adminAuth";
+import { staffCanAccessRecord } from "../../../../../../lib/staffAccounts";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,7 @@ export const runtime = "nodejs";
 export async function GET(request, { params }) {
   const authError = await requireAdminApi(request);
   if (authError) return authError;
+  const session = await getAdminSessionFromRequest(request);
 
   const id = Number(params.id);
   if (!Number.isInteger(id)) {
@@ -21,9 +23,12 @@ export async function GET(request, { params }) {
 
   try {
     const sql = getSql();
-    const [row] = await sql`SELECT code, applicant_name, pdf_url FROM access_codes WHERE id = ${id}`;
+    const [row] = await sql`SELECT code, applicant_name, pdf_url, requested_package FROM access_codes WHERE id = ${id}`;
     if (!row || !row.pdf_url) {
       return NextResponse.json({ error: "لم يتم العثور على ملف محفوظ لهذا السجل." }, { status: 404 });
+    }
+    if (!staffCanAccessRecord(session?.staffType, row.requested_package)) {
+      return NextResponse.json({ error: "لا تملك صلاحية الوصول إلى هذا السجل." }, { status: 403 });
     }
 
     assertBlobConfigured();

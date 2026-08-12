@@ -116,6 +116,35 @@ CREATE TABLE IF NOT EXISTS admin_sessions (
 -- call — 'staff' can use the CV archive but not the codes endpoints.
 ALTER TABLE admin_sessions ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin', 'staff'));
 
+-- Individual staff accounts, created and managed by the admin (list/edit/
+-- reset password/deactivate/delete) — replaces the old single shared
+-- STAFF_USERNAME/STAFF_PASSWORD_HASH login with real per-person accounts.
+-- staff_type decides which archive records a staff member may view/update
+-- (see lib/staffAccounts.js): 'linkedin' staff are scoped to CVs whose
+-- requested_package is the LinkedIn package; 'sending' staff get everything
+-- else. `active = false` is a soft disable — the row (and their name in
+-- sending_status_history.changed_by, which is plain text, not a foreign
+-- key) stays intact so history/timelines are never broken by deactivating
+-- or deleting a staff account.
+CREATE TABLE IF NOT EXISTS staff_accounts (
+  id SERIAL PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  staff_type TEXT NOT NULL CHECK (staff_type IN ('sending', 'linkedin')),
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Which staff account (if any) a staff session belongs to — NULL for admin
+-- sessions and for a session created via the legacy STAFF_USERNAME/
+-- STAFF_PASSWORD_HASH env-var login (kept working for backward
+-- compatibility; treated as unrestricted, same as before this table
+-- existed). ON DELETE SET NULL so deleting a staff_accounts row can never
+-- fail on a lingering session row — the session simply stops resolving to
+-- an active staff account on its next use (see lib/adminAuth.js).
+ALTER TABLE admin_sessions ADD COLUMN IF NOT EXISTS staff_account_id INTEGER REFERENCES staff_accounts(id) ON DELETE SET NULL;
+
 -- User sessions: lets someone who already validated a code at the gate
 -- resume their form after a page refresh without re-entering it. The code
 -- itself stays 'available' (not consumed) until a PDF is actually exported

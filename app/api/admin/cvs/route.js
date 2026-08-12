@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { getSql } from "../../../../lib/db";
-import { requireAdminApi } from "../../../../lib/adminAuth";
+import { requireAdminApi, getAdminSessionFromRequest } from "../../../../lib/adminAuth";
 import { isValidLifecycleStatus } from "../../../../lib/lifecycleStatus";
+import { staffCanAccessRecord } from "../../../../lib/staffAccounts";
 
 export const runtime = "nodejs";
 
 export async function GET(request) {
   const authError = await requireAdminApi(request);
   if (authError) return authError;
+  const session = await getAdminSessionFromRequest(request);
 
   try {
     const sql = getSql();
@@ -31,7 +33,12 @@ export async function GET(request) {
             WHERE pdf_url IS NOT NULL
             ORDER BY generated_at DESC
           `;
-    return NextResponse.json({ cvs: rows });
+    // A 'linkedin'/'sending'-typed staff account (session.staffType set)
+    // only sees the slice of the archive their type covers — a legacy
+    // staff-env login or the admin role has no staffType and sees
+    // everything, unchanged from before this feature existed.
+    const visible = rows.filter((r) => staffCanAccessRecord(session?.staffType, r.requested_package));
+    return NextResponse.json({ cvs: visible });
   } catch (err) {
     console.error("Failed to list archived CVs:", err);
     return NextResponse.json({ error: "تعذّر تحميل الأرشيف. حاول مرة أخرى." }, { status: 500 });

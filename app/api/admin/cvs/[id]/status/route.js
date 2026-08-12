@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSql } from "../../../../../../lib/db";
 import { requireAdminApi, getAdminSessionFromRequest } from "../../../../../../lib/adminAuth";
 import { isManualLifecycleStatus } from "../../../../../../lib/lifecycleStatus";
+import { staffCanAccessRecord } from "../../../../../../lib/staffAccounts";
 
 export const runtime = "nodejs";
 
@@ -30,19 +31,29 @@ export async function PATCH(request, { params }) {
 
   try {
     const sql = getSql();
+
+    const [existing] = await sql`SELECT requested_package FROM access_codes WHERE id = ${id} AND pdf_url IS NOT NULL`;
+    if (!existing) {
+      return NextResponse.json({ error: "السجل غير موجود." }, { status: 404 });
+    }
+    if (!staffCanAccessRecord(session?.staffType, existing.requested_package)) {
+      return NextResponse.json({ error: "لا تملك صلاحية الوصول إلى هذا السجل." }, { status: 403 });
+    }
+
     const [row] = await sql`
       UPDATE access_codes
       SET lifecycle_status = ${status}
       WHERE id = ${id} AND pdf_url IS NOT NULL
       RETURNING id, lifecycle_status
     `;
-    if (!row) {
-      return NextResponse.json({ error: "السجل غير موجود." }, { status: 404 });
-    }
 
-    // There's one shared login per role (no per-person accounts), so the
-    // session's role uniquely determines which username made this change.
-    const changedBy = (session?.role === "staff" ? process.env.STAFF_USERNAME : process.env.ADMIN_USERNAME) || null;
+    // A staff_accounts-backed session records its real per-person username;
+    // a legacy staff-env or admin login still falls back to the single
+    // shared env-var username, exactly as before this feature existed.
+    const changedBy =
+      session?.staffUsername ||
+      (session?.role === "staff" ? process.env.STAFF_USERNAME : process.env.ADMIN_USERNAME) ||
+      null;
     await sql`INSERT INTO sending_status_history (access_code_id, status, changed_by) VALUES (${id}, ${status}, ${changedBy})`;
 
     return NextResponse.json({ cv: row });
