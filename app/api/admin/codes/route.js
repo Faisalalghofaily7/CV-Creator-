@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { getSql } from "../../../../lib/db";
 import { requireAdminApi } from "../../../../lib/adminAuth";
 import { createAccessCode } from "../../../../lib/accessCodes";
-import { createLinkedinOrderAndNotify, sallaOrderNumberExists, logLinkedinStatusChange } from "../../../../lib/linkedinOrdersDb";
-import { PACKAGE_INTEGRATED, PACKAGE_LINKEDIN } from "../../../../lib/staffAccounts";
+import { createLinkedinOrderAndNotify, sallaOrderNumberExists } from "../../../../lib/linkedinOrdersDb";
+import { PACKAGE_LINKEDIN } from "../../../../lib/staffAccounts";
 
 export const runtime = "nodejs";
 
@@ -72,7 +72,12 @@ export async function POST(request) {
       return NextResponse.json({ linkedinOrder });
     }
 
-    const startsLinkedinTrack = requestedPackage === PACKAGE_INTEGRATED;
+    // An Integrated code's LinkedIn track does NOT start here — Staff2's
+    // work depends on the CV, so linkedin_status stays NULL until the CV is
+    // actually generated (see lib/cvArchive.js), at the same moment
+    // Staff1's sending track begins. LinkedIn-only orders (handled above)
+    // have no CV at all, so they're the only package that starts its
+    // LinkedIn track immediately at creation.
     const row = await createAccessCode({
       sallaOrderNumber,
       applicantPhone,
@@ -80,11 +85,7 @@ export async function POST(request) {
       requestedPackage,
       generationSource: "manual",
       createdBy,
-      linkedinStatus: startsLinkedinTrack ? "awaiting_processing" : null,
     });
-    if (startsLinkedinTrack) {
-      await logLinkedinStatusChange({ accessCodeId: row.id, status: "awaiting_processing", changedBy: createdBy });
-    }
     return NextResponse.json({ code: row });
   } catch (err) {
     console.error("Failed to create access code:", err);

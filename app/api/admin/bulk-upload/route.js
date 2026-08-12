@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { requireAdminApi } from "../../../../lib/adminAuth";
 import { createAccessCode } from "../../../../lib/accessCodes";
 import { parseSallaOrdersWorkbook, isTargetStatus, classifyPackage, BulkImportError } from "../../../../lib/sallaBulkImport";
-import { createLinkedinOrderAndNotify, sallaOrderNumberExists, logLinkedinStatusChange } from "../../../../lib/linkedinOrdersDb";
-import { PACKAGE_INTEGRATED, PACKAGE_LINKEDIN } from "../../../../lib/staffAccounts";
+import { createLinkedinOrderAndNotify, sallaOrderNumberExists } from "../../../../lib/linkedinOrdersDb";
+import { PACKAGE_LINKEDIN } from "../../../../lib/staffAccounts";
 
 export const runtime = "nodejs";
 
@@ -105,10 +105,10 @@ export async function POST(request) {
       }
 
       // CV Arabic/English or Integrated — all get an access code the same
-      // way; Integrated additionally starts the LinkedIn track immediately
-      // on the same record, independent of when (or whether) the customer
-      // ends up generating their CV.
-      const startsLinkedinTrack = detectedPackage === PACKAGE_INTEGRATED;
+      // way. An Integrated code's LinkedIn track does NOT start here —
+      // Staff2's work depends on the CV, so linkedin_status stays NULL
+      // until the CV is actually generated (see lib/cvArchive.js), at the
+      // same moment Staff1's sending track begins.
       const created = await createAccessCode({
         sallaOrderNumber: orderNumber,
         applicantName: row.name || null,
@@ -117,11 +117,7 @@ export async function POST(request) {
         requestedPackage: detectedPackage,
         generationSource: "bulk_excel",
         createdBy,
-        linkedinStatus: startsLinkedinTrack ? "awaiting_processing" : null,
       });
-      if (startsLinkedinTrack) {
-        await logLinkedinStatusChange({ accessCodeId: created.id, status: "awaiting_processing", changedBy: createdBy });
-      }
       generated += 1;
       generatedCodes.push({ code: created.code, sallaOrderNumber: orderNumber, applicantName: row.name || null, requestedPackage: detectedPackage });
     }

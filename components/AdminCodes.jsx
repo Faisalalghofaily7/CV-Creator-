@@ -472,7 +472,7 @@ export default function AdminCodes({ role, staffType }) {
           {isAdmin ? (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button onClick={() => setTab("codes")} style={tabBtnStyle(tab === "codes")}>
-                <Sparkles size={15} /> الأكواد
+                <Sparkles size={15} /> الطلبات
               </button>
               <button onClick={() => setTab("bulk")} style={tabBtnStyle(tab === "bulk")}>
                 <Upload size={15} /> رفع طلبات سلة
