@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdminApi } from "../../../../lib/adminAuth";
 import { createAccessCode } from "../../../../lib/accessCodes";
 import { parseSallaOrdersWorkbook, isTargetStatus, classifyPackage, BulkImportError } from "../../../../lib/sallaBulkImport";
-import { createLinkedinOrder, sallaOrderNumberExists, logLinkedinStatusChange } from "../../../../lib/linkedinOrdersDb";
+import { createLinkedinOrderAndNotify, sallaOrderNumberExists, logLinkedinStatusChange } from "../../../../lib/linkedinOrdersDb";
 import { PACKAGE_INTEGRATED, PACKAGE_LINKEDIN } from "../../../../lib/staffAccounts";
 
 export const runtime = "nodejs";
@@ -83,8 +83,9 @@ export async function POST(request) {
 
       if (detectedPackage === PACKAGE_LINKEDIN) {
         // LinkedIn-only: no CV, no access code — lands directly in
-        // LinkedIn staff's panel at 'awaiting_processing'.
-        const created = await createLinkedinOrder({
+        // LinkedIn staff's panel at 'awaiting_processing', and emails
+        // active LinkedIn staff (see lib/linkedinOrdersDb.js).
+        await createLinkedinOrderAndNotify({
           sallaOrderNumber: orderNumber,
           applicantName: row.name || null,
           applicantPhone: row.phone || null,
@@ -92,7 +93,6 @@ export async function POST(request) {
           generationSource: "bulk_excel",
           createdBy,
         });
-        await logLinkedinStatusChange({ linkedinOrderId: created.id, status: created.status, changedBy: createdBy });
         linkedinOnlyCreated += 1;
         generatedLinkedinOrders.push({ sallaOrderNumber: orderNumber, applicantName: row.name || null });
         continue;

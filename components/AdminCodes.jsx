@@ -33,6 +33,7 @@ export default function AdminCodes({ role, staffType }) {
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState("");
   const [lastGenerated, setLastGenerated] = useState(null);
+  const [lastLinkedinOrder, setLastLinkedinOrder] = useState(null);
   const [copiedCode, setCopiedCode] = useState("");
   const [newOrderNumber, setNewOrderNumber] = useState("");
   const [newPhone, setNewPhone] = useState("");
@@ -234,8 +235,18 @@ export default function AdminCodes({ role, staffType }) {
       if (res.status === 401) return redirectToLogin();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "تعذّر إنشاء الكود.");
-      setLastGenerated(data.code);
-      setCodes((prev) => [data.code, ...prev]);
+      // A LinkedIn-only package never gets a code — it's a standalone
+      // linkedin_orders record instead (see app/api/admin/codes/route.js),
+      // so there's no code to show/copy here; point the admin at the
+      // LinkedIn panel instead.
+      if (data.linkedinOrder) {
+        setLastGenerated(null);
+        setLastLinkedinOrder(data.linkedinOrder);
+      } else {
+        setLastLinkedinOrder(null);
+        setLastGenerated(data.code);
+        setCodes((prev) => [data.code, ...prev]);
+      }
       setNewOrderNumber("");
       setNewPhone("");
       setNewName("");
@@ -539,6 +550,15 @@ export default function AdminCodes({ role, staffType }) {
               <button onClick={() => handleCopy(lastGenerated.code)} style={btnIcon} title="نسخ">
                 {copiedCode === lastGenerated.code ? <Check size={17} color="#1a3a5c" /> : <Copy size={17} color="#1a3a5c" />}
               </button>
+            </div>
+          )}
+
+          {lastLinkedinOrder && (
+            <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10, background: C.soft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px" }}>
+              <Linkedin size={18} color="#1a3a5c" />
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>
+                طلب لينكدإن فقط — لا يوجد كود لهذا الطلب. يظهر الآن في تبويب "طلبات لينكدإن" بحالة "بانتظار المعالجة".
+              </span>
             </div>
           )}
         </div>
