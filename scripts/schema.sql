@@ -136,6 +136,14 @@ CREATE TABLE IF NOT EXISTS staff_accounts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Notification recipient for this staff member — set/edited by the admin
+-- in the staff management tab, replacing the old fixed
+-- STAFF_NOTIFICATION_EMAIL/STAFF2_NOTIFICATION_EMAIL env vars as the
+-- source of notification recipients (see lib/cvArchive.js). NULL/blank
+-- until the admin sets it — an account with no email configured is simply
+-- skipped when routing notifications, never a crash.
+ALTER TABLE staff_accounts ADD COLUMN IF NOT EXISTS email TEXT;
+
 -- Which staff account (if any) a staff session belongs to — NULL for admin
 -- sessions and for a session created via the legacy STAFF_USERNAME/
 -- STAFF_PASSWORD_HASH env-var login (kept working for backward

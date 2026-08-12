@@ -4,16 +4,9 @@ import React, { useEffect, useState } from "react";
 import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock, Upload, Tag, User, Users, UserPlus, Power, Trash2, Lock, AlertTriangle } from "lucide-react";
 import { LIFECYCLE_STATUSES, MANUAL_LIFECYCLE_STATUSES, LIFECYCLE_STATUS_LABELS, LIFECYCLE_STATUS_COLORS } from "../lib/lifecycleStatus";
 import { GENERATION_SOURCE_LABELS, GENERATION_SOURCE_COLORS, creatorLabel } from "../lib/generationSource";
-import { STAFF_TYPES, STAFF_TYPE_LABELS } from "../lib/staffAccounts";
+import { STAFF_TYPES, STAFF_TYPE_LABELS, PACKAGE_OPTIONS, isValidStaffEmail } from "../lib/staffAccounts";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
-
-const PACKAGE_OPTIONS = [
-  "باقة الوصول المتكاملة",
-  "إعداد سيرة ذاتية باللغة الإنجليزية",
-  "إعداد سيرة ذاتية باللغة العربية",
-  "إعداد صفحة على لينكدإن احترافية",
-];
 
 // Real server-side session (httpOnly cookie, checked in app/admin/page.js
 // before this component ever renders) — no credentials live here anymore.
@@ -64,6 +57,7 @@ export default function AdminCodes({ role }) {
   const [newStaffDisplayName, setNewStaffDisplayName] = useState("");
   const [newStaffPassword, setNewStaffPassword] = useState("");
   const [newStaffType, setNewStaffType] = useState(STAFF_TYPES[0]);
+  const [newStaffEmail, setNewStaffEmail] = useState("");
   const [creatingStaff, setCreatingStaff] = useState(false);
   const [createStaffError, setCreateStaffError] = useState("");
   const [staffRowErrors, setStaffRowErrors] = useState({});
@@ -282,6 +276,10 @@ export default function AdminCodes({ role }) {
       setCreateStaffError("اسم المستخدم والاسم مطلوبان، وكلمة المرور 8 أحرف على الأقل.");
       return;
     }
+    if (newStaffEmail.trim() && !isValidStaffEmail(newStaffEmail)) {
+      setCreateStaffError("البريد الإلكتروني غير صالح.");
+      return;
+    }
     setCreatingStaff(true);
     setCreateStaffError("");
     try {
@@ -293,6 +291,7 @@ export default function AdminCodes({ role }) {
           displayName: newStaffDisplayName.trim(),
           password: newStaffPassword,
           staffType: newStaffType,
+          email: newStaffEmail.trim(),
         }),
       });
       if (res.status === 401) return redirectToLogin();
@@ -303,6 +302,7 @@ export default function AdminCodes({ role }) {
       setNewStaffDisplayName("");
       setNewStaffPassword("");
       setNewStaffType(STAFF_TYPES[0]);
+      setNewStaffEmail("");
     } catch (err) {
       setCreateStaffError(err.message || "تعذّر إنشاء حساب الموظف.");
     } finally {
@@ -612,6 +612,7 @@ export default function AdminCodes({ role }) {
           newStaffDisplayName={newStaffDisplayName} setNewStaffDisplayName={setNewStaffDisplayName}
           newStaffPassword={newStaffPassword} setNewStaffPassword={setNewStaffPassword}
           newStaffType={newStaffType} setNewStaffType={setNewStaffType}
+          newStaffEmail={newStaffEmail} setNewStaffEmail={setNewStaffEmail}
           creatingStaff={creatingStaff}
           createStaffError={createStaffError}
           canCreateStaff={canCreateStaff}
@@ -733,6 +734,7 @@ function StaffManagement({
   newStaffDisplayName, setNewStaffDisplayName,
   newStaffPassword, setNewStaffPassword,
   newStaffType, setNewStaffType,
+  newStaffEmail, setNewStaffEmail,
   creatingStaff, createStaffError, canCreateStaff, handleCreateStaff,
   patchStaff, savingStaffId, staffRowErrors,
   resetPasswordDrafts, setResetPasswordDrafts, handleResetPassword,
@@ -763,6 +765,13 @@ function StaffManagement({
               ))}
             </select>
           </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 700, color: C.slate }}>
+            البريد الإلكتروني (اختياري)
+            <input type="email" value={newStaffEmail} onChange={(e) => setNewStaffEmail(e.target.value)} placeholder="sara@example.com" style={inputStyle} />
+          </label>
+        </div>
+        <div style={{ ...hintStyleAdmin, marginBottom: 12 }}>
+          يُستخدم البريد الإلكتروني لإرسال إشعارات الطلبات الجديدة تلقائياً حسب نوع الموظف والخدمة المطلوبة — يمكن تركه فارغاً وتعبئته لاحقاً.
         </div>
         <button onClick={handleCreateStaff} disabled={creatingStaff || !canCreateStaff} style={{ ...btnPrimary, opacity: creatingStaff || !canCreateStaff ? 0.7 : 1 }}>
           {creatingStaff ? <><Loader2 size={16} className="spin-admin" /> جارٍ الإنشاء...</> : <><UserPlus size={16} /> إنشاء حساب موظف</>}
@@ -802,6 +811,7 @@ function StaffManagement({
 function StaffRow({ staff, saving, rowError, patchStaff, resetDraft, setResetDraft, handleResetPassword, deleteWarning, clearDeleteWarning, handleDeleteStaff }) {
   const [username, setUsername] = useState(staff.username);
   const [displayName, setDisplayName] = useState(staff.display_name);
+  const [email, setEmail] = useState(staff.email || "");
 
   return (
     <div style={archiveCard}>
@@ -847,6 +857,17 @@ function StaffRow({ staff, saving, rowError, patchStaff, resetDraft, setResetDra
               <option key={t} value={t}>{STAFF_TYPE_LABELS[t]}</option>
             ))}
           </select>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 11, color: C.slate, fontWeight: 600 }}>
+          البريد الإلكتروني
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onBlur={() => email.trim() !== (staff.email || "") && patchStaff(staff.id, { email: email.trim() })}
+            placeholder="بدون بريد"
+            style={{ ...inputStyle, padding: "6px 8px", fontSize: 12.5 }}
+          />
         </label>
         <Field icon={Clock} label="تاريخ الإنشاء" value={new Date(staff.created_at).toLocaleString("ar-SA")} />
       </div>

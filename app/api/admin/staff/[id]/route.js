@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { getSql } from "../../../../../lib/db";
 import { requireAdminApi } from "../../../../../lib/adminAuth";
-import { isValidStaffType } from "../../../../../lib/staffAccounts";
+import { isValidStaffType, isValidStaffEmail } from "../../../../../lib/staffAccounts";
 
 export const runtime = "nodejs";
 
@@ -46,6 +46,17 @@ export async function PATCH(request, { params }) {
     const hasActive = typeof body.active === "boolean";
     const active = hasActive ? body.active : null;
 
+    // Email supports an explicit clear (empty string -> NULL), unlike the
+    // COALESCE fields above — the admin may want to remove a departed
+    // staffer's address without deactivating or deleting the account, so
+    // "" has to mean something different from "key not sent at all".
+    const hasEmail = typeof body.email === "string";
+    const emailTrimmed = hasEmail ? body.email.trim() : "";
+    if (hasEmail && emailTrimmed && !isValidStaffEmail(emailTrimmed)) {
+      return NextResponse.json({ error: "البريد الإلكتروني غير صالح." }, { status: 400 });
+    }
+    const emailValue = emailTrimmed || null;
+
     let newPasswordHash = null;
     if (typeof body.newPassword === "string" && body.newPassword.length > 0) {
       if (body.newPassword.length < MIN_PASSWORD_LENGTH) {
@@ -61,9 +72,10 @@ export async function PATCH(request, { params }) {
           display_name = COALESCE(${displayName}, display_name),
           staff_type = COALESCE(${staffType}, staff_type),
           active = COALESCE(${active}, active),
-          password_hash = COALESCE(${newPasswordHash}, password_hash)
+          password_hash = COALESCE(${newPasswordHash}, password_hash),
+          email = CASE WHEN ${hasEmail} THEN ${emailValue} ELSE email END
       WHERE id = ${id}
-      RETURNING id, username, display_name, staff_type, active, created_at
+      RETURNING id, username, display_name, staff_type, email, active, created_at
     `;
     if (!row) {
       return NextResponse.json({ error: "الموظف غير موجود." }, { status: 404 });
