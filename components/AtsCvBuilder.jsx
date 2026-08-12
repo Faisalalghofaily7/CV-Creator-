@@ -1162,7 +1162,12 @@ export default function AtsCvBuilder({ accessCode }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.summary) throw new Error(data.error || "AI summary generation failed");
       setForm((f) => ({ ...f, summary: data.summary }));
-    } catch {
+    } catch (err) {
+      // The server route already logs full diagnostic detail for this
+      // failure (see [AI-SUMMARY-ERROR] in server logs) — this is just the
+      // client-side trace, useful when the failure happened before a
+      // response ever came back (e.g. a network error).
+      console.error("[AI-SUMMARY-ERROR] client:", err?.message || err);
       setAiSummaryError(t.summaryGenerateError);
     } finally {
       setAiSummaryLoading(false);

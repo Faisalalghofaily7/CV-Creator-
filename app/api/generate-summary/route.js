@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { APIError } from "@anthropic-ai/sdk";
 import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
 
 export const runtime = "nodejs";
@@ -89,7 +90,26 @@ export async function POST(request) {
 
     return NextResponse.json({ summary });
   } catch (err) {
-    console.error("Failed to generate professional summary:", err);
-    return NextResponse.json({ error: "تعذّر إنشاء الملخص المهني تلقائياً." }, { status: 500 });
+    // Full diagnostic detail server-side (message/type/stack, plus the
+    // Anthropic API's own status + response body when this came from the
+    // model call) — the client only ever sees the graceful fallback below.
+    console.error("[AI-SUMMARY-ERROR]", {
+      message: err?.message,
+      name: err?.name,
+      stack: err?.stack,
+      ...(err instanceof APIError && {
+        anthropicStatus: err.status,
+        anthropicErrorType: err.type,
+        anthropicResponseBody: err.error,
+      }),
+    });
+
+    // This is a best-effort AI enhancement, never a required step — the CV
+    // form's summary field just stays empty/editable and the rest of the
+    // flow (preview, PDF export, archival, LinkedIn track, notifications)
+    // is entirely unaffected by this failing. Always 200, never a 500: an
+    // AI hiccup here must never look like a server crash to the client,
+    // to monitoring, or to the customer.
+    return NextResponse.json({ summary: "", error: "تعذّر إنشاء الملخص المهني تلقائياً." });
   }
 }
