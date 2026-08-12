@@ -246,6 +246,61 @@ STAFF_PASSWORD_HASH=$2b$12$........................................
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS salla_order_status TEXT;
 ```
 
+### رفع تقرير طلبات سلة (Excel) — اكتشاف الخدمة تلقائياً وتوجيه طلبات لينكدإن
+
+تبويب **"رفع طلبات سلة"** في `/admin` (مشرف فقط) يقبل ملف Excel (`.xlsx`) بالأعمدة التالية (بأي ترتيب، يُطابَق بالاسم لا بالموضع): "اسم العميل"، "رقم الجوال"، "رقم الطلب"، "حالة الطلب"، **"اسماء المنتجات مع SKU"** (نص المنتج الخام كما يُصدِّره سلة، بما فيه شوائب مثل `(SKU: )...(Qty: 1)`). تتم معالجة صفوف حالتها "بإنتظار المراجعة" فقط.
+
+**اكتشاف الخدمة المطلوبة تلقائياً** (`lib/sallaBulkImport.js`): بعد تنظيف نص المنتج (إزالة أغلفة `SKU`/`Qty` والاقتباسات الزائدة)، تُطبَّق قواعد كلمات مفتاحية بترتيب محدد (المتكاملة أولاً، فلينكدإن فقط، فالإنجليزية، فالعربية) مع تطبيع أحرف عربية متكافئة (أ/إ/ا، ة/ه، ى/ي) حتى تتطابق اختلافات الكتابة الشائعة. أي نص لا يُطابِق أي قاعدة **لا يُخمَّن أبداً** — يظهر في ملخص الرفع كصف "غير محدد — يحتاج مراجعة" مع رقم الطلب والنص الخام، بدون إنشاء أي سجل له.
+
+**التوجيه حسب الخدمة المكتشفة:**
+- **سيرة عربي/إنجليزي** → يُنشأ كود دخول عادي (بنفس منطق التوليد اليدوي)، الموظف المسؤول لاحقاً هو موظف الإرسال فقط.
+- **الباقة المتكاملة** → يُنشأ كود دخول، **ويبدأ مسار لينكدإن على نفس الكود فوراً** (`linkedin_status = 'بانتظار المعالجة'`) — يظهر في تبويب "طلبات لينكدإن" من لحظة الرفع، بغض النظر عن متى (أو إن) أنشأ العميل سيرته الذاتية فعلياً.
+- **لينكدإن فقط** → **لا يُنشأ أي كود ولا سيرة ذاتية إطلاقاً** — يُنشأ سجل مباشرة في جدول `linkedin_orders` ويظهر في تبويب "طلبات لينكدإن" عند "بانتظار المعالجة".
+
+**عدم التكرار:** رقم طلب سلة الواحد = سجل واحد للأبد، عبر الجدولين معاً (`access_codes` و`linkedin_orders`) — رفع نفس الملف مرة أخرى (أو ملف متداخل معه) يتخطى أي رقم طلب سبق معالجته تلقائياً، بغض النظر عن نوع السجل الذي أُنشئ له.
+
+**تبويب "طلبات لينكدإن"** (مشرف + موظف نوعه `linkedin`): قائمة موحدة تجمع طلبات لينكدإن المستقلة والقسم الخاص بلينكدإن من أكواد الباقة المتكاملة، بمسار حالة مستقل تماماً عن حالة إرسال السيرة الذاتية (`بانتظار المعالجة` ← `قيد التنفيذ` ← `معلّق`/`تم الإنجاز`)، مع سجل زمني كامل لكل تغيير. موظف نوعه `sending` لا يرى هذا التبويب إطلاقاً (403 على مستوى الخادم لو استُدعيت نقطة النهاية مباشرة).
+
+**زر نسخ سريع:** كل حقل بيانات عميل معروض (الاسم، الجوال، رقم الطلب، الخدمة، البريد، المدينة، ...) في الأرشيف وتبويب الأكواد وتبويب طلبات لينكدإن يحمل زر نسخ صغيراً بجانبه.
+
+**تشغيل ترحيل قاعدة البيانات:** شغّل هذا في محرر SQL الخاص بـ Neon، جملة واحدة في كل مرة (محرر Neon لا يقبل عدة جمل دفعة واحدة):
+```sql
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS linkedin_status TEXT
+  CHECK (linkedin_status IS NULL OR linkedin_status IN ('awaiting_processing', 'in_progress', 'on_hold', 'done'));
+```
+```sql
+CREATE TABLE IF NOT EXISTS linkedin_orders (
+  id SERIAL PRIMARY KEY,
+  salla_order_number TEXT UNIQUE NOT NULL,
+  applicant_name TEXT,
+  applicant_phone TEXT,
+  requested_package TEXT,
+  status TEXT NOT NULL DEFAULT 'awaiting_processing'
+    CHECK (status IN ('awaiting_processing', 'in_progress', 'on_hold', 'done')),
+  generation_source TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (generation_source IN ('manual', 'bulk_excel', 'salla_webhook', 'unknown')),
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+```sql
+CREATE TABLE IF NOT EXISTS linkedin_status_history (
+  id SERIAL PRIMARY KEY,
+  access_code_id INTEGER REFERENCES access_codes(id) ON DELETE CASCADE,
+  linkedin_order_id INTEGER REFERENCES linkedin_orders(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  changed_by TEXT,
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((access_code_id IS NOT NULL)::int + (linkedin_order_id IS NOT NULL)::int = 1)
+);
+```
+```sql
+CREATE INDEX IF NOT EXISTS linkedin_status_history_access_code_id_idx ON linkedin_status_history (access_code_id);
+```
+```sql
+CREATE INDEX IF NOT EXISTS linkedin_status_history_linkedin_order_id_idx ON linkedin_status_history (linkedin_order_id);
+```
+
 ## ملاحظة تقنية
 
 تم تجربة توليد الـ PDF يدويًا (jsPDF + رسم الحروف) أولاً، لكن اتضح أن هذا النهج ينتج نصاً "يبدو صحيحاً" بصرياً لكنه يُخزَّن بترتيب غير صحيح داخل الملف، فيظهر مبعثراً عند النسخ (مشكلة توافق ATS جوهرية). التحويل إلى Puppeteer + Chromium يحل هذا جذرياً لأن المتصفح نفسه يتولى تشكيل العربي وترتيب النص المخزَّن.

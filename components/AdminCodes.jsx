@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock, Upload, Tag, User, Users, UserPlus, Power, Trash2, Lock, AlertTriangle } from "lucide-react";
+import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock, Upload, Tag, User, Users, UserPlus, Power, Trash2, Lock, AlertTriangle, Linkedin, AlertCircle } from "lucide-react";
 import { LIFECYCLE_STATUSES, MANUAL_LIFECYCLE_STATUSES, LIFECYCLE_STATUS_LABELS, LIFECYCLE_STATUS_COLORS } from "../lib/lifecycleStatus";
 import { GENERATION_SOURCE_LABELS, GENERATION_SOURCE_COLORS, creatorLabel } from "../lib/generationSource";
 import { STAFF_TYPES, STAFF_TYPE_LABELS, PACKAGE_OPTIONS, isValidStaffEmail } from "../lib/staffAccounts";
+import { LINKEDIN_ORDER_STATUSES, LINKEDIN_ORDER_STATUS_LABELS, LINKEDIN_ORDER_STATUS_COLORS } from "../lib/linkedinOrders";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
@@ -14,13 +15,16 @@ function redirectToLogin() {
   window.location.assign("/admin/login");
 }
 
-export default function AdminCodes({ role }) {
-  // Staff accounts can only use the CV archive — the codes tab isn't even
-  // shown to them, though the real boundary is server-side (requireRole:
-  // "admin" on the codes routes; this is just so they never see a tab that
-  // would immediately 403 if they clicked it).
+export default function AdminCodes({ role, staffType }) {
+  // Staff accounts can only use the CV archive (and, for 'linkedin'-type
+  // staff, the LinkedIn panel) — tabs the current role/type can't reach
+  // aren't even shown, though the real boundary is always server-side
+  // (requireRole on the codes routes, staffType checks on the LinkedIn
+  // routes; this is just so nobody sees a tab that would immediately 403
+  // if they clicked it).
   const isAdmin = role === "admin";
-  const [tab, setTab] = useState(isAdmin ? "codes" : "archive"); // "codes" | "archive"
+  const isLinkedinStaff = role === "staff" && staffType === "linkedin";
+  const [tab, setTab] = useState(isAdmin ? "codes" : isLinkedinStaff ? "linkedin" : "archive"); // "codes" | "bulk" | "archive" | "staff" | "linkedin"
   const [loggingOut, setLoggingOut] = useState(false);
 
   const [codes, setCodes] = useState([]);
@@ -64,6 +68,15 @@ export default function AdminCodes({ role }) {
   const [savingStaffId, setSavingStaffId] = useState(null);
   const [resetPasswordDrafts, setResetPasswordDrafts] = useState({});
   const [deleteWarning, setDeleteWarning] = useState(null); // { id, historyCount, message } | null
+
+  const [linkedinOrders, setLinkedinOrders] = useState([]);
+  const [loadingLinkedinOrders, setLoadingLinkedinOrders] = useState(false);
+  const [linkedinOrdersError, setLinkedinOrdersError] = useState("");
+  const [linkedinStatusFilter, setLinkedinStatusFilter] = useState("");
+  const [updatingLinkedinId, setUpdatingLinkedinId] = useState(null);
+  const [linkedinStatusErrors, setLinkedinStatusErrors] = useState({});
+  const [linkedinExpandedId, setLinkedinExpandedId] = useState(null);
+  const [linkedinHistoryCache, setLinkedinHistoryCache] = useState({});
 
   async function loadCodes() {
     setLoadingCodes(true);
@@ -125,6 +138,71 @@ export default function AdminCodes({ role }) {
   useEffect(() => {
     if (tab === "staff" && isAdmin) loadStaff();
   }, [tab, isAdmin]);
+
+  async function loadLinkedinOrders() {
+    setLoadingLinkedinOrders(true);
+    setLinkedinOrdersError("");
+    try {
+      const res = await fetch("/api/admin/linkedin-orders");
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر تحميل طلبات لينكدإن.");
+      setLinkedinOrders(data.orders || []);
+    } catch (err) {
+      setLinkedinOrdersError(err.message || "تعذّر تحميل طلبات لينكدإن.");
+    } finally {
+      setLoadingLinkedinOrders(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "linkedin") loadLinkedinOrders();
+  }, [tab]);
+
+  async function updateLinkedinOrderStatus(id, newStatus) {
+    const previous = linkedinOrders.find((o) => o.id === id)?.status;
+    setUpdatingLinkedinId(id);
+    setLinkedinStatusErrors((prev) => ({ ...prev, [id]: "" }));
+    setLinkedinOrders((prev) => prev.map((o) => (o.id === id ? { ...o, status: newStatus } : o)));
+    try {
+      const res = await fetch(`/api/admin/linkedin-orders/${id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر تحديث الحالة.");
+      if (linkedinExpandedId === id) loadLinkedinHistory(id);
+    } catch (err) {
+      setLinkedinOrders((prev) => prev.map((o) => (o.id === id ? { ...o, status: previous } : o)));
+      setLinkedinStatusErrors((prev) => ({ ...prev, [id]: err.message || "تعذّر تحديث الحالة." }));
+    } finally {
+      setUpdatingLinkedinId(null);
+    }
+  }
+
+  async function loadLinkedinHistory(id) {
+    setLinkedinHistoryCache((prev) => ({ ...prev, [id]: { loading: true, error: "", items: prev[id]?.items || [] } }));
+    try {
+      const res = await fetch(`/api/admin/linkedin-orders/${id}/history`);
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر تحميل السجل.");
+      setLinkedinHistoryCache((prev) => ({ ...prev, [id]: { loading: false, error: "", items: data.history || [] } }));
+    } catch (err) {
+      setLinkedinHistoryCache((prev) => ({ ...prev, [id]: { loading: false, error: err.message || "تعذّر تحميل السجل.", items: [] } }));
+    }
+  }
+
+  function toggleLinkedinHistory(id) {
+    if (linkedinExpandedId === id) {
+      setLinkedinExpandedId(null);
+      return;
+    }
+    setLinkedinExpandedId(id);
+    if (!linkedinHistoryCache[id]) loadLinkedinHistory(id);
+  }
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -381,7 +459,7 @@ export default function AdminCodes({ role }) {
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
           {isAdmin ? (
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button onClick={() => setTab("codes")} style={tabBtnStyle(tab === "codes")}>
                 <Sparkles size={15} /> الأكواد
               </button>
@@ -391,8 +469,20 @@ export default function AdminCodes({ role }) {
               <button onClick={() => setTab("archive")} style={tabBtnStyle(tab === "archive")}>
                 <Archive size={15} /> أرشيف السير الذاتية
               </button>
+              <button onClick={() => setTab("linkedin")} style={tabBtnStyle(tab === "linkedin")}>
+                <Linkedin size={15} /> طلبات لينكدإن
+              </button>
               <button onClick={() => setTab("staff")} style={tabBtnStyle(tab === "staff")}>
                 <Users size={15} /> الموظفون
+              </button>
+            </div>
+          ) : isLinkedinStaff ? (
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => setTab("linkedin")} style={tabBtnStyle(tab === "linkedin")}>
+                <Linkedin size={15} /> طلبات لينكدإن
+              </button>
+              <button onClick={() => setTab("archive")} style={tabBtnStyle(tab === "archive")}>
+                <Archive size={15} /> أرشيف السير الذاتية
               </button>
             </div>
           ) : (
@@ -402,12 +492,12 @@ export default function AdminCodes({ role }) {
           )}
           {tab !== "bulk" && (
           <button
-            onClick={() => (tab === "archive" ? loadCvs(statusFilter) : tab === "staff" ? loadStaff() : loadCodes())}
-            disabled={tab === "archive" ? loadingCvs : tab === "staff" ? loadingStaff : loadingCodes}
+            onClick={() => (tab === "archive" ? loadCvs(statusFilter) : tab === "staff" ? loadStaff() : tab === "linkedin" ? loadLinkedinOrders() : loadCodes())}
+            disabled={tab === "archive" ? loadingCvs : tab === "staff" ? loadingStaff : tab === "linkedin" ? loadingLinkedinOrders : loadingCodes}
             style={tabBtnStyle(false)}
             title="تحديث القائمة — البيانات لا تتحدث تلقائيًا إذا تغيّرت من جلسة أخرى"
           >
-            <RefreshCw size={15} className={(tab === "archive" ? loadingCvs : tab === "staff" ? loadingStaff : loadingCodes) ? "spin-admin" : ""} /> تحديث
+            <RefreshCw size={15} className={(tab === "archive" ? loadingCvs : tab === "staff" ? loadingStaff : tab === "linkedin" ? loadingLinkedinOrders : loadingCodes) ? "spin-admin" : ""} /> تحديث
           </button>
           )}
         </div>
@@ -509,7 +599,7 @@ export default function AdminCodes({ role }) {
                           {LIFECYCLE_STATUS_LABELS[c.lifecycle_status] || c.lifecycle_status}
                         </span>
                       </td>
-                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_name || "—"}</td>
+                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_name ? <CopyField value={c.applicant_name} /> : "—"}</td>
                       <td style={tdStyle}>
                         <input
                           defaultValue={c.salla_order_number || ""}
@@ -518,8 +608,8 @@ export default function AdminCodes({ role }) {
                           style={{ ...inputStyle, padding: "6px 8px", fontSize: 12.5 }}
                         />
                       </td>
-                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_phone || "—"}</td>
-                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.requested_package || "—"}</td>
+                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_phone ? <CopyField value={c.applicant_phone} /> : "—"}</td>
+                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.requested_package ? <CopyField value={c.requested_package} /> : "—"}</td>
                       <td style={tdStyle}>
                         <span style={{ display: "inline-block", background: sourceColors.bg, color: sourceColors.fg, fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 9px", whiteSpace: "nowrap" }}>
                           {GENERATION_SOURCE_LABELS[c.generation_source] || GENERATION_SOURCE_LABELS.unknown}
@@ -554,7 +644,7 @@ export default function AdminCodes({ role }) {
           <div style={{ background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.ink, marginBottom: 6 }}>رفع تقرير طلبات سلة (Excel)</div>
             <div style={{ ...hintStyleAdmin, marginBottom: 14 }}>
-              يجب أن يحتوي الملف على الأعمدة: "اسم العميل"، "رقم الجوال"، "رقم الطلب"، "حالة الطلب" (صف العناوين أولاً). سيتم توليد كود لكل طلب بحالة "بإنتظار المراجعة" فقط، مع تخطي أي رقم طلب لديه كود بالفعل تلقائياً.
+              يجب أن يحتوي الملف على الأعمدة: "اسم العميل"، "رقم الجوال"، "رقم الطلب"، "حالة الطلب"، "اسماء المنتجات مع SKU" (صف العناوين أولاً). تتم معالجة كل طلب بحالة "بإنتظار المراجعة" فقط، والخدمة المطلوبة تُكتشف تلقائياً من عمود المنتج: سيرة عربي/إنجليزي وباقة متكاملة تولّد كوداً (والمتكاملة تبدأ مسار لينكدإن أيضاً)، وطلبات لينكدإن فقط تُضاف مباشرة إلى تبويب "طلبات لينكدإن" بدون كود أو سيرة ذاتية. أي طلب لا يمكن تصنيفه يظهر في قائمة "يحتاج مراجعة" أدناه بدلاً من تخمينه. رقم الطلب المكرر (بأي نوع سجل) يُتخطى تلقائياً.
             </div>
             <input
               type="file"
@@ -574,25 +664,80 @@ export default function AdminCodes({ role }) {
             {uploadResult && (
               <div style={{ marginTop: 18, background: C.soft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px" }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 8 }}>
-                  تمت معالجة {uploadResult.processed} صف — تم توليد {uploadResult.generated} كود جديد — تم تخطي {uploadResult.skippedDuplicate} (موجودة مسبقاً) — {uploadResult.ineligibleStatus} غير مؤهلة (حالة مختلفة)
+                  تمت معالجة {uploadResult.processed} صف — تم توليد {uploadResult.generated} كود جديد — تم إنشاء {uploadResult.linkedinOnlyCreated || 0} طلب لينكدإن فقط — تم تخطي {uploadResult.skippedDuplicate} (موجودة مسبقاً) — {uploadResult.ineligibleStatus} غير مؤهلة (حالة مختلفة)
                   {uploadResult.invalidRows > 0 ? ` — ${uploadResult.invalidRows} صف بدون رقم طلب` : ""}
+                  {uploadResult.unrecognized?.length > 0 ? ` — ${uploadResult.unrecognized.length} غير محدد (يحتاج مراجعة)` : ""}
                 </div>
+
+                {uploadResult.unrecognized?.length > 0 && (
+                  <div style={{ marginBottom: 14, background: "#fdecea", border: "1px solid #f3c9c4", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: "#8a2e24", marginBottom: 8 }}>
+                      <AlertCircle size={15} /> طلبات غير محددة — تحتاج مراجعة يدوية (لم يُنشأ لها أي سجل)
+                    </div>
+                    <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                        <thead>
+                          <tr>
+                            <th style={thStyle}>رقم الطلب</th>
+                            <th style={thStyle}>اسم العميل</th>
+                            <th style={thStyle}>نص المنتج الخام</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {uploadResult.unrecognized.map((u, i) => (
+                            <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}>
+                              <td style={tdStyle}><CopyField value={u.sallaOrderNumber} /></td>
+                              <td style={tdStyle}>{u.applicantName || "—"}</td>
+                              <td style={{ ...tdStyle, maxWidth: 260, overflowWrap: "break-word" }}>{u.rawProduct || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 {uploadResult.generatedCodes?.length > 0 && (
-                  <div style={{ maxHeight: 220, overflowY: "auto", background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 8 }}>
+                  <div style={{ maxHeight: 220, overflowY: "auto", background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 8, marginBottom: uploadResult.generatedLinkedinOrders?.length > 0 ? 12 : 0 }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                       <thead>
                         <tr style={{ background: C.soft }}>
                           <th style={thStyle}>الكود</th>
                           <th style={thStyle}>رقم طلب سلة</th>
                           <th style={thStyle}>اسم العميل</th>
+                          <th style={thStyle}>الخدمة المكتشفة</th>
                         </tr>
                       </thead>
                       <tbody>
                         {uploadResult.generatedCodes.map((g) => (
                           <tr key={g.code} style={{ borderTop: `1px solid ${C.line}` }}>
-                            <td style={{ ...tdStyle, fontFamily: "monospace", fontWeight: 700 }}>{g.code}</td>
-                            <td style={tdStyle}>{g.sallaOrderNumber}</td>
+                            <td style={{ ...tdStyle, fontFamily: "monospace", fontWeight: 700 }}><CopyField value={g.code} /></td>
+                            <td style={tdStyle}><CopyField value={g.sallaOrderNumber} /></td>
                             <td style={tdStyle}>{g.applicantName || "—"}</td>
+                            <td style={{ ...tdStyle, fontSize: 11.5 }}>{g.requestedPackage || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {uploadResult.generatedLinkedinOrders?.length > 0 && (
+                  <div style={{ maxHeight: 220, overflowY: "auto", background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 8 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                      <thead>
+                        <tr style={{ background: C.soft }}>
+                          <th style={thStyle}>رقم طلب سلة</th>
+                          <th style={thStyle}>اسم العميل</th>
+                          <th style={thStyle}>النوع</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {uploadResult.generatedLinkedinOrders.map((g, i) => (
+                          <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}>
+                            <td style={tdStyle}><CopyField value={g.sallaOrderNumber} /></td>
+                            <td style={tdStyle}>{g.applicantName || "—"}</td>
+                            <td style={{ ...tdStyle, fontSize: 11.5 }}>لينكدإن فقط (بدون كود)</td>
                           </tr>
                         ))}
                       </tbody>
@@ -624,6 +769,21 @@ export default function AdminCodes({ role }) {
           handleResetPassword={handleResetPassword}
           deleteWarning={deleteWarning} setDeleteWarning={setDeleteWarning}
           handleDeleteStaff={handleDeleteStaff}
+        />
+        ) : tab === "linkedin" && (isAdmin || isLinkedinStaff) ? (
+        <LinkedinPanel
+          orders={linkedinOrders}
+          loading={loadingLinkedinOrders}
+          error={linkedinOrdersError}
+          statusFilter={linkedinStatusFilter}
+          setStatusFilter={setLinkedinStatusFilter}
+          updatingId={updatingLinkedinId}
+          statusErrors={linkedinStatusErrors}
+          updateStatus={updateLinkedinOrderStatus}
+          expandedId={linkedinExpandedId}
+          toggleHistory={toggleLinkedinHistory}
+          historyCache={linkedinHistoryCache}
+          isAdmin={isAdmin}
         />
         ) : (
         <>
@@ -667,12 +827,12 @@ export default function AdminCodes({ role }) {
                     </div>
 
                     <div style={fieldGrid}>
-                      <Field icon={Mail} label="البريد الإلكتروني" value={v.applicant_email} />
-                      <Field icon={Phone} label="رقم الجوال" value={v.applicant_phone} />
-                      <Field icon={MapPin} label="المدينة" value={v.applicant_city} />
-                      <Field icon={Hash} label="رقم طلب سلة" value={v.salla_order_number} />
-                      <Field icon={KeyRound} label="كود الدخول" value={v.code} mono />
-                      <Field icon={Sparkles} label="الخدمة المطلوبة" value={v.requested_package} />
+                      <Field icon={Mail} label="البريد الإلكتروني" value={v.applicant_email} copyable />
+                      <Field icon={Phone} label="رقم الجوال" value={v.applicant_phone} copyable />
+                      <Field icon={MapPin} label="المدينة" value={v.applicant_city} copyable />
+                      <Field icon={Hash} label="رقم طلب سلة" value={v.salla_order_number} copyable />
+                      <Field icon={KeyRound} label="كود الدخول" value={v.code} mono copyable />
+                      <Field icon={Sparkles} label="الخدمة المطلوبة" value={v.requested_package} copyable />
                       <Field icon={Languages} label="اللغة" value={v.pdf_language === "en" ? "English" : "العربية"} />
                       <Field icon={Tag} label="المصدر" value={GENERATION_SOURCE_LABELS[v.generation_source]} />
                       <Field icon={User} label="المُنشئ" value={creatorLabel(v)} />
@@ -934,6 +1094,114 @@ function StaffRow({ staff, saving, rowError, patchStaff, resetDraft, setResetDra
   );
 }
 
+function LinkedinPanel({ orders, loading, error, statusFilter, setStatusFilter, updatingId, statusErrors, updateStatus, expandedId, toggleHistory, historyCache, isAdmin }) {
+  const filtered = orders.filter((o) => !statusFilter || o.status === statusFilter);
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: C.slate }}>تصفية حسب الحالة:</span>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 10px", fontSize: 12.5 }}>
+          <option value="">الكل</option>
+          {LINKEDIN_ORDER_STATUSES.map((s) => (
+            <option key={s} value={s}>{LINKEDIN_ORDER_STATUS_LABELS[s]}</option>
+          ))}
+        </select>
+      </div>
+
+      {loading ? (
+        <div style={emptyStateBox}>جارٍ التحميل...</div>
+      ) : error ? (
+        <div style={{ ...emptyStateBox, color: "#b3261e" }}>{error}</div>
+      ) : filtered.length === 0 ? (
+        <div style={emptyStateBox}>{statusFilter ? "لا توجد طلبات بهذه الحالة." : "لا توجد طلبات لينكدإن بعد."}</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {filtered.map((o) => {
+            const colors = LINKEDIN_ORDER_STATUS_COLORS[o.status] || LINKEDIN_ORDER_STATUS_COLORS.awaiting_processing;
+            const history = historyCache[o.id];
+            const expanded = expandedId === o.id;
+            return (
+              <div key={o.id} style={archiveCard}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: C.ink }}>{o.applicantName || "بدون اسم"}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3, fontSize: 12, color: C.slate, fontWeight: 600 }}>
+                      {o.sourceType === "linkedin_only" ? "لينكدإن فقط (بدون كود/سيرة ذاتية)" : `ضمن الباقة المتكاملة${o.code ? ` — الكود: ${o.code}` : ""}`}
+                    </div>
+                  </div>
+                  <span style={{ display: "inline-block", background: colors.bg, color: colors.fg, fontSize: 11.5, fontWeight: 700, borderRadius: 999, padding: "5px 12px", whiteSpace: "nowrap" }}>
+                    {LINKEDIN_ORDER_STATUS_LABELS[o.status] || o.status}
+                  </span>
+                </div>
+
+                <div style={fieldGrid}>
+                  <Field icon={User} label="اسم العميل" value={o.applicantName} copyable />
+                  <Field icon={Phone} label="رقم الجوال" value={o.applicantPhone} copyable />
+                  <Field icon={Hash} label="رقم طلب سلة" value={o.sallaOrderNumber} copyable />
+                  <Field icon={Sparkles} label="الخدمة المطلوبة" value={o.requestedPackage} copyable />
+                  {o.applicantEmail && <Field icon={Mail} label="البريد الإلكتروني" value={o.applicantEmail} copyable />}
+                  <Field icon={Tag} label="المصدر" value={GENERATION_SOURCE_LABELS[o.generationSource] || GENERATION_SOURCE_LABELS.unknown} />
+                  <Field icon={User} label="المُنشئ" value={creatorLabel({ generation_source: o.generationSource, created_by: o.createdBy })} />
+                  <Field icon={Clock} label="تاريخ الإنشاء" value={new Date(o.createdAt).toLocaleString("ar-SA")} />
+                  {isAdmin && o.sourceType === "integrated_cv" && (
+                    <Field icon={FileText} label="حالة إرسال السيرة" value={LIFECYCLE_STATUS_LABELS[o.cvLifecycleStatus] || o.cvLifecycleStatus} />
+                  )}
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: C.slate, fontWeight: 600 }}>
+                    الحالة:
+                    <select
+                      value={o.status}
+                      disabled={updatingId === o.id}
+                      onChange={(e) => updateStatus(o.id, e.target.value)}
+                      style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 12.5, opacity: updatingId === o.id ? 0.6 : 1 }}
+                    >
+                      {LINKEDIN_ORDER_STATUSES.map((s) => (
+                        <option key={s} value={s}>{LINKEDIN_ORDER_STATUS_LABELS[s]}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <button onClick={() => toggleHistory(o.id)} style={btnHistoryToggle}>
+                    {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} السجل الزمني
+                  </button>
+                </div>
+
+                {statusErrors[o.id] && <div style={{ marginTop: 8, fontSize: 12, color: "#b3261e" }}>{statusErrors[o.id]}</div>}
+
+                {expanded && (
+                  <div style={historyBox}>
+                    <LinkedinTimelineList history={history} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+function LinkedinTimelineList({ history }) {
+  if (history?.loading) return <div style={{ fontSize: 12.5, color: C.slate }}>جارٍ التحميل...</div>;
+  if (history?.error) return <div style={{ fontSize: 12.5, color: "#b3261e" }}>{history.error}</div>;
+  if (!history?.items?.length) return <div style={{ fontSize: 12.5, color: C.slate }}>لا يوجد سجل بعد.</div>;
+  return (
+    <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+      {history.items.map((h, i) => (
+        <li key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12.5, flexWrap: "wrap" }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: (LINKEDIN_ORDER_STATUS_COLORS[h.status] || LINKEDIN_ORDER_STATUS_COLORS.awaiting_processing).fg, flexShrink: 0 }} />
+          <span style={{ fontWeight: 700, color: C.ink }}>{LINKEDIN_ORDER_STATUS_LABELS[h.status] || h.status}</span>
+          <span style={{ color: C.slate }}>{new Date(h.changed_at).toLocaleString("ar-SA")}</span>
+          <span style={{ color: C.slate }}>— {h.changed_by || "غير معروف"}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function TimelineList({ history }) {
   if (history?.loading) return <div style={{ fontSize: 12.5, color: C.slate }}>جارٍ التحميل...</div>;
   if (history?.error) return <div style={{ fontSize: 12.5, color: "#b3261e" }}>{history.error}</div>;
@@ -952,14 +1220,40 @@ function TimelineList({ history }) {
   );
 }
 
-function Field({ icon: Icon, label, value, mono }) {
+function Field({ icon: Icon, label, value, mono, copyable }) {
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.slate, fontWeight: 600, marginBottom: 2 }}>
         <Icon size={12} /> {label}
       </div>
-      <div style={{ fontSize: 13, color: C.ink, fontFamily: mono ? "monospace" : "inherit", overflowWrap: "break-word" }}>{value || "—"}</div>
+      <div style={{ fontSize: 13, color: C.ink, fontFamily: mono ? "monospace" : "inherit", overflowWrap: "break-word" }}>
+        {copyable && value ? <CopyField value={value} mono={mono} /> : value || "—"}
+      </div>
     </div>
+  );
+}
+
+// Small "value + copy button" pair used for every displayed customer field
+// across the admin archive, codes table, and LinkedIn panel — copies just
+// that one value with a brief "تم النسخ" confirmation.
+function CopyField({ value, mono }) {
+  const [copied, setCopied] = useState(false);
+  if (value === null || value === undefined || value === "") return <span>—</span>;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <span style={{ fontFamily: mono ? "monospace" : "inherit", overflowWrap: "break-word" }}>{value}</span>
+      <button
+        onClick={() => {
+          navigator.clipboard?.writeText(String(value));
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        }}
+        style={{ ...btnIcon, padding: 2 }}
+        title={copied ? "تم النسخ" : "نسخ"}
+      >
+        {copied ? <Check size={12} color="#1a3a5c" /> : <Copy size={12} />}
+      </button>
+    </span>
   );
 }
 

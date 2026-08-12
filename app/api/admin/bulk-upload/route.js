@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireAdminApi } from "../../../../lib/adminAuth";
-import { createAccessCode, findAccessCodeBySallaOrder } from "../../../../lib/accessCodes";
-import { parseSallaOrdersWorkbook, isTargetStatus, BulkImportError } from "../../../../lib/sallaBulkImport";
+import { createAccessCode } from "../../../../lib/accessCodes";
+import { parseSallaOrdersWorkbook, isTargetStatus, classifyPackage, BulkImportError } from "../../../../lib/sallaBulkImport";
+import { createLinkedinOrder, sallaOrderNumberExists, logLinkedinStatusChange } from "../../../../lib/linkedinOrdersDb";
+import { PACKAGE_INTEGRATED, PACKAGE_LINKEDIN } from "../../../../lib/staffAccounts";
 
 export const runtime = "nodejs";
 
@@ -21,7 +23,7 @@ export async function POST(request) {
 
     // Parsed entirely in memory below and discarded once rows are
     // extracted — the raw file is never written to disk or blob storage,
-    // only the four fields we need per row make it into the database.
+    // only the fields we need per row make it into the database.
     const buffer = Buffer.from(await file.arrayBuffer());
 
     let rows;
@@ -35,16 +37,23 @@ export async function POST(request) {
     }
 
     let generated = 0;
+    let linkedinOnlyCreated = 0;
     let skippedDuplicate = 0;
     let ineligibleStatus = 0;
     let invalidRows = 0;
     const generatedCodes = [];
+    const generatedLinkedinOrders = [];
+    const unrecognized = [];
+
+    // This route already requires requireRole: "admin" — single shared
+    // login per role, not per-person accounts.
+    const createdBy = process.env.ADMIN_USERNAME || null;
 
     // Sequential, not parallel — the same order number can legitimately
     // appear twice in one export (or across two uploads of overlapping
-    // files), and only ever gets one code. That dedupe check has to see
-    // the previous row's insert, which parallel execution wouldn't
-    // guarantee.
+    // files), and only ever gets one record (code OR LinkedIn-only order).
+    // That dedupe check has to see the previous row's insert, which
+    // parallel execution wouldn't guarantee.
     for (const row of rows) {
       if (!isTargetStatus(row.status)) {
         ineligibleStatus += 1;
@@ -55,32 +64,72 @@ export async function POST(request) {
         invalidRows += 1;
         continue;
       }
-      const existing = await findAccessCodeBySallaOrder(orderNumber);
-      if (existing) {
+
+      // Dedup spans both access_codes and linkedin_orders — "one Salla
+      // order number = one record ever," regardless of which kind of
+      // record it eventually became.
+      if (await sallaOrderNumberExists(orderNumber)) {
         skippedDuplicate += 1;
         continue;
       }
+
+      const detectedPackage = classifyPackage(row.rawProduct);
+      if (!detectedPackage) {
+        // Never guessed, never silently skipped — a paying customer's
+        // order always surfaces for manual review instead.
+        unrecognized.push({ sallaOrderNumber: orderNumber, applicantName: row.name || null, rawProduct: row.rawProduct || "" });
+        continue;
+      }
+
+      if (detectedPackage === PACKAGE_LINKEDIN) {
+        // LinkedIn-only: no CV, no access code — lands directly in
+        // LinkedIn staff's panel at 'awaiting_processing'.
+        const created = await createLinkedinOrder({
+          sallaOrderNumber: orderNumber,
+          applicantName: row.name || null,
+          applicantPhone: row.phone || null,
+          requestedPackage: detectedPackage,
+          generationSource: "bulk_excel",
+          createdBy,
+        });
+        await logLinkedinStatusChange({ linkedinOrderId: created.id, status: created.status, changedBy: createdBy });
+        linkedinOnlyCreated += 1;
+        generatedLinkedinOrders.push({ sallaOrderNumber: orderNumber, applicantName: row.name || null });
+        continue;
+      }
+
+      // CV Arabic/English or Integrated — all get an access code the same
+      // way; Integrated additionally starts the LinkedIn track immediately
+      // on the same record, independent of when (or whether) the customer
+      // ends up generating their CV.
+      const startsLinkedinTrack = detectedPackage === PACKAGE_INTEGRATED;
       const created = await createAccessCode({
         sallaOrderNumber: orderNumber,
         applicantName: row.name || null,
         applicantPhone: row.phone || null,
         sallaOrderStatus: row.status || null,
-        // This route already requires requireRole: "admin" — single
-        // shared login per role, not per-person accounts.
+        requestedPackage: detectedPackage,
         generationSource: "bulk_excel",
-        createdBy: process.env.ADMIN_USERNAME || null,
+        createdBy,
+        linkedinStatus: startsLinkedinTrack ? "awaiting_processing" : null,
       });
+      if (startsLinkedinTrack) {
+        await logLinkedinStatusChange({ accessCodeId: created.id, status: "awaiting_processing", changedBy: createdBy });
+      }
       generated += 1;
-      generatedCodes.push({ code: created.code, sallaOrderNumber: orderNumber, applicantName: row.name || null });
+      generatedCodes.push({ code: created.code, sallaOrderNumber: orderNumber, applicantName: row.name || null, requestedPackage: detectedPackage });
     }
 
     return NextResponse.json({
       processed: rows.length,
       generated,
+      linkedinOnlyCreated,
       skippedDuplicate,
       ineligibleStatus,
       invalidRows,
+      unrecognized,
       generatedCodes,
+      generatedLinkedinOrders,
     });
   } catch (err) {
     console.error("Failed to process Salla bulk upload:", err);

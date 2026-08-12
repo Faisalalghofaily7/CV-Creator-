@@ -163,3 +163,49 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at TIMESTAMPTZ NOT NULL
 );
+
+-- Separate LinkedIn-work status track (see lib/linkedinOrders.js), decoupled
+-- from lifecycle_status: NULL means this code has no LinkedIn work
+-- attached; a value means the Integrated package's LinkedIn portion is
+-- being tracked here, starting at 'awaiting_processing' the moment the
+-- code is created (bulk-upload/webhook/manual) — independent of whether
+-- the customer has generated their CV yet, since LinkedIn staff can start
+-- that work immediately.
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS linkedin_status TEXT
+  CHECK (linkedin_status IS NULL OR linkedin_status IN ('awaiting_processing', 'in_progress', 'on_hold', 'done'));
+
+-- Standalone LinkedIn-only orders: the "إعداد صفحة على لينكدإن احترافية"
+-- package involves no CV at all, so it never gets an access_codes row (no
+-- code is generated, no CV builder is ever touched) — this table is its
+-- entire record, visible directly in LinkedIn staff's panel from creation.
+CREATE TABLE IF NOT EXISTS linkedin_orders (
+  id SERIAL PRIMARY KEY,
+  salla_order_number TEXT UNIQUE NOT NULL,
+  applicant_name TEXT,
+  applicant_phone TEXT,
+  requested_package TEXT,
+  status TEXT NOT NULL DEFAULT 'awaiting_processing'
+    CHECK (status IN ('awaiting_processing', 'in_progress', 'on_hold', 'done')),
+  generation_source TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (generation_source IN ('manual', 'bulk_excel', 'salla_webhook', 'unknown')),
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Timestamped audit trail for the LinkedIn-work track, covering BOTH kinds
+-- of record it can apply to — an Integrated access_codes row (via
+-- linkedin_status) or a standalone linkedin_orders row — so the merged
+-- LinkedIn panel can show one consistent timeline regardless of which
+-- table a given item actually lives in. Exactly one of the two FKs is set
+-- per row.
+CREATE TABLE IF NOT EXISTS linkedin_status_history (
+  id SERIAL PRIMARY KEY,
+  access_code_id INTEGER REFERENCES access_codes(id) ON DELETE CASCADE,
+  linkedin_order_id INTEGER REFERENCES linkedin_orders(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  changed_by TEXT,
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((access_code_id IS NOT NULL)::int + (linkedin_order_id IS NOT NULL)::int = 1)
+);
+CREATE INDEX IF NOT EXISTS linkedin_status_history_access_code_id_idx ON linkedin_status_history (access_code_id);
+CREATE INDEX IF NOT EXISTS linkedin_status_history_linkedin_order_id_idx ON linkedin_status_history (linkedin_order_id);
