@@ -30,13 +30,15 @@ export async function GET(request) {
 
     const linkedinOnlyRows = await sql`
       SELECT id, salla_order_number, applicant_name, applicant_phone, requested_package, status,
-             generation_source, created_by, created_at
+             generation_source, created_by, created_at, notification_status, notified_email, notified_at
       FROM linkedin_orders
       ORDER BY created_at DESC
     `;
     const integratedRows = await sql`
       SELECT id, code, salla_order_number, applicant_name, applicant_phone, applicant_email, requested_package,
-             linkedin_status AS status, lifecycle_status, generation_source, created_by, created_at
+             linkedin_status AS status, lifecycle_status, generation_source, created_by, created_at,
+             linkedin_notification_status AS notification_status, linkedin_notified_email AS notified_email,
+             linkedin_notified_at AS notified_at
       FROM access_codes
       WHERE linkedin_status IS NOT NULL
       ORDER BY created_at DESC
@@ -57,6 +59,9 @@ export async function GET(request) {
         createdAt: r.created_at,
         code: null,
         cvLifecycleStatus: null,
+        notificationStatus: r.notification_status,
+        notifiedEmail: r.notified_email,
+        notifiedAt: r.notified_at,
       })),
       ...integratedRows.map((r) => ({
         id: `cv-${r.id}`,
@@ -72,6 +77,9 @@ export async function GET(request) {
         createdAt: r.created_at,
         code: r.code,
         cvLifecycleStatus: r.lifecycle_status,
+        notificationStatus: r.notification_status,
+        notifiedEmail: r.notified_email,
+        notifiedAt: r.notified_at,
       })),
     ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 

@@ -41,6 +41,7 @@ export async function POST(request) {
     let skippedDuplicate = 0;
     let ineligibleStatus = 0;
     let invalidRows = 0;
+    let linkedinNotificationIssues = 0;
     const generatedCodes = [];
     const generatedLinkedinOrders = [];
     const unrecognized = [];
@@ -85,7 +86,7 @@ export async function POST(request) {
         // LinkedIn-only: no CV, no access code — lands directly in
         // LinkedIn staff's panel at 'awaiting_processing', and emails
         // active LinkedIn staff (see lib/linkedinOrdersDb.js).
-        await createLinkedinOrderAndNotify({
+        const createdOrder = await createLinkedinOrderAndNotify({
           sallaOrderNumber: orderNumber,
           applicantName: row.name || null,
           applicantPhone: row.phone || null,
@@ -94,7 +95,12 @@ export async function POST(request) {
           createdBy,
         });
         linkedinOnlyCreated += 1;
-        generatedLinkedinOrders.push({ sallaOrderNumber: orderNumber, applicantName: row.name || null });
+        if (createdOrder.notification_status !== "sent") linkedinNotificationIssues += 1;
+        generatedLinkedinOrders.push({
+          sallaOrderNumber: orderNumber,
+          applicantName: row.name || null,
+          notificationStatus: createdOrder.notification_status,
+        });
         continue;
       }
 
@@ -127,6 +133,7 @@ export async function POST(request) {
       skippedDuplicate,
       ineligibleStatus,
       invalidRows,
+      linkedinNotificationIssues,
       unrecognized,
       generatedCodes,
       generatedLinkedinOrders,

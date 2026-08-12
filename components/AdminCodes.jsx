@@ -554,11 +554,14 @@ export default function AdminCodes({ role, staffType }) {
           )}
 
           {lastLinkedinOrder && (
-            <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10, background: C.soft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px" }}>
-              <Linkedin size={18} color="#1a3a5c" />
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>
-                طلب لينكدإن فقط — لا يوجد كود لهذا الطلب. يظهر الآن في تبويب "طلبات لينكدإن" بحالة "بانتظار المعالجة".
-              </span>
+            <div style={{ marginTop: 18, background: C.soft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Linkedin size={18} color="#1a3a5c" />
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>
+                  طلب لينكدإن فقط — لا يوجد كود لهذا الطلب. يظهر الآن في تبويب "طلبات لينكدإن" بحالة "بانتظار المعالجة".
+                </span>
+              </div>
+              <NotificationStatusLine status={lastLinkedinOrder.notification_status} email={lastLinkedinOrder.notified_email} />
             </div>
           )}
         </div>
@@ -689,6 +692,12 @@ export default function AdminCodes({ role, staffType }) {
                   {uploadResult.unrecognized?.length > 0 ? ` — ${uploadResult.unrecognized.length} غير محدد (يحتاج مراجعة)` : ""}
                 </div>
 
+                {uploadResult.linkedinNotificationIssues > 0 && (
+                  <div style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: "#8a6100", background: "#fff3cd", border: "1px solid #ffe08a", borderRadius: 8, padding: "10px 12px" }}>
+                    <AlertTriangle size={15} /> لم يصل إشعار لينكدإن لـ{uploadResult.linkedinNotificationIssues} من الطلبات — راجع عمود "الإشعار" أدناه، وتأكد من وجود موظف لينكدإن نشط ببريد إلكتروني.
+                  </div>
+                )}
+
                 {uploadResult.unrecognized?.length > 0 && (
                   <div style={{ marginBottom: 14, background: "#fdecea", border: "1px solid #f3c9c4", borderRadius: 8, padding: "12px 14px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: "#8a2e24", marginBottom: 8 }}>
@@ -750,6 +759,7 @@ export default function AdminCodes({ role, staffType }) {
                           <th style={thStyle}>رقم طلب سلة</th>
                           <th style={thStyle}>اسم العميل</th>
                           <th style={thStyle}>النوع</th>
+                          <th style={thStyle}>الإشعار</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -758,6 +768,15 @@ export default function AdminCodes({ role, staffType }) {
                             <td style={tdStyle}><CopyField value={g.sallaOrderNumber} /></td>
                             <td style={tdStyle}>{g.applicantName || "—"}</td>
                             <td style={{ ...tdStyle, fontSize: 11.5 }}>لينكدإن فقط (بدون كود)</td>
+                            <td style={{ ...tdStyle, fontSize: 11.5 }}>
+                              {g.notificationStatus === "sent" ? (
+                                <span style={{ color: "#1e7d34", fontWeight: 700 }}>تم الإرسال</span>
+                              ) : g.notificationStatus === "no_recipient" ? (
+                                <span style={{ color: "#8a6100", fontWeight: 700 }}>لا يوجد مستلم</span>
+                              ) : (
+                                <span style={{ color: "#b3261e", fontWeight: 700 }}>فشل الإرسال</span>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1190,6 +1209,12 @@ function LinkedinPanel({ orders, loading, error, statusFilter, setStatusFilter, 
 
                 {statusErrors[o.id] && <div style={{ marginTop: 8, fontSize: 12, color: "#b3261e" }}>{statusErrors[o.id]}</div>}
 
+                {o.notificationStatus ? (
+                  <NotificationStatusLine status={o.notificationStatus} email={o.notifiedEmail} />
+                ) : o.sourceType === "integrated_cv" ? (
+                  <div style={{ marginTop: 8, fontSize: 12, color: C.slate }}>سيصل إشعار لينكدإن عند توليد السيرة الذاتية.</div>
+                ) : null}
+
                 {expanded && (
                   <div style={historyBox}>
                     <LinkedinTimelineList history={history} />
@@ -1237,6 +1262,35 @@ function TimelineList({ history }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+// Shows whether the LinkedIn-staff notification for a request actually
+// went out — used in the manual "just created" success box, the LinkedIn
+// panel's per-order cards, and (implicitly, via the same wording) the
+// bulk-upload summary. `status` is one of 'sent' | 'failed' |
+// 'no_recipient' | null/undefined (nothing was ever due).
+function NotificationStatusLine({ status, email }) {
+  if (!status) return null;
+  if (status === "sent") {
+    return (
+      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#1e7d34", fontWeight: 600 }}>
+        <Check size={14} /> تم إرسال إشعار لينكدإن إلى: {email || "—"}
+      </div>
+    );
+  }
+  if (status === "no_recipient") {
+    return (
+      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8a6100", fontWeight: 600 }}>
+        <AlertTriangle size={14} /> لم يُرسل إشعار لينكدإن — لا يوجد موظف لينكدإن نشط ببريد إلكتروني.
+      </div>
+    );
+  }
+  // "failed"
+  return (
+    <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#b3261e", fontWeight: 600 }}>
+      <AlertTriangle size={14} /> فشل إرسال إشعار لينكدإن{email ? ` إلى: ${email}` : ""} — تحقّق من إعدادات البريد (Resend).
+    </div>
   );
 }
 

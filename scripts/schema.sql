@@ -209,3 +209,27 @@ CREATE TABLE IF NOT EXISTS linkedin_status_history (
 );
 CREATE INDEX IF NOT EXISTS linkedin_status_history_access_code_id_idx ON linkedin_status_history (access_code_id);
 CREATE INDEX IF NOT EXISTS linkedin_status_history_linkedin_order_id_idx ON linkedin_status_history (linkedin_order_id);
+
+-- Visibility into whether the LinkedIn-staff notification email for THIS
+-- record actually went out — computed once, right after the send attempt
+-- at creation time (linkedin_orders) or at CV-generation time for an
+-- Integrated code (access_codes), and shown directly in the admin's
+-- merged LinkedIn panel instead of only ever existing in server logs.
+-- 'sent' = at least one active recipient got the email; 'failed' = at
+-- least one recipient existed but every send attempt errored (e.g. Resend
+-- misconfigured); 'no_recipient' = no active 'linkedin'-type staff account
+-- had an email set at all, so nothing was ever attempted. NULL means no
+-- notification was ever due for this record.
+ALTER TABLE linkedin_orders ADD COLUMN IF NOT EXISTS notification_status TEXT
+  CHECK (notification_status IS NULL OR notification_status IN ('sent', 'failed', 'no_recipient'));
+ALTER TABLE linkedin_orders ADD COLUMN IF NOT EXISTS notified_email TEXT;
+ALTER TABLE linkedin_orders ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+
+-- Same tracking for the LinkedIn portion of an Integrated-package code —
+-- kept as separate columns (not reusing the linkedin_orders ones, which
+-- don't apply to this row at all) so the merged panel can show identical
+-- status for both kinds of record it lists.
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS linkedin_notification_status TEXT
+  CHECK (linkedin_notification_status IS NULL OR linkedin_notification_status IN ('sent', 'failed', 'no_recipient'));
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS linkedin_notified_email TEXT;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS linkedin_notified_at TIMESTAMPTZ;
