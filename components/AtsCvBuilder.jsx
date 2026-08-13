@@ -40,6 +40,87 @@ function clearProgress() {
 const ARABIC_RE = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
 const ARABIC_RE_G = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/g;
 
+// Mirror of ARABIC_RE/ARABIC_RE_G above, used to reject English prose in
+// Arabic-mode "must be single-language" fields (see guardLangInput) —
+// plain Latin letters only, so digits/punctuation/Arabic are never matched.
+const LATIN_RE = /[A-Za-z]/;
+const LATIN_RE_G = /[A-Za-z]/g;
+
+// Converts Eastern Arabic-Indic digits (٠-٩) to Western digits (0-9) —
+// matches the rest of the app's established convention (see
+// formatArabicDate in lib/email.js) of never using Arabic-Indic numerals,
+// regardless of CV language. Applied to every guarded field so a year,
+// GPA, or count typed on an Arabic keyboard always comes out as normal
+// Western digits.
+const EASTERN_DIGITS = "٠١٢٣٤٥٦٧٨٩";
+function normalizeDigits(value) {
+  return String(value ?? "").replace(/[٠-٩]/g, (d) => String(EASTERN_DIGITS.indexOf(d)));
+}
+
+// Latin tokens legitimately used within Arabic-CV prose — tool/software
+// names and professional certifications/acronyms commonly written in Latin
+// script even in otherwise-Arabic text (the same convention already used
+// by AR_TECH_SKILLS below, which keeps entries like "Excel"/"Power BI"/
+// "SQL" in Latin even in the Arabic list). Checked case-insensitively.
+// Deliberately generous: this list only keeps common single-word terms
+// from ever counting toward the "English prose" run in
+// hasEnglishProseRun/stripEnglishProseRuns below — a term NOT on this list
+// still isn't blocked on its own, since the block only fires on a run of
+// two or more consecutive non-Arabic-separated Latin words either way.
+const LATIN_PROSE_ALLOWLIST = new Set([
+  "excel", "word", "powerpoint", "sap", "oracle", "erp", "quickbooks", "power", "bi", "sql",
+  "python", "photoshop", "autocad", "primavera", "java", "html", "css", "php", "aws", "ios",
+  "android", "linkedin", "pmp", "pmi", "cfa", "cma", "cpa", "socpa", "mba", "hr", "it", "kpi",
+  "roi", "crm", "gpa", "vs", "llc", "sa", "ksa", "b2b", "b2c", "api", "seo", "sem", "ui", "ux",
+]);
+
+// Arabic-mode mirror of the English-mode "must be single-language" guard
+// below: a lone Latin word/acronym/tool-name is normal even in Arabic
+// prose (see the allowlist above), but two or more of them IN A ROW
+// (nothing but whitespace/punctuation between — an Arabic word in between
+// resets the count) reads as an actual English sentence, which is what
+// actually needs catching. Returns the token match objects that make up
+// each qualifying run, in source order.
+function findEnglishProseRuns(value) {
+  // Same Arabic ranges as ARABIC_RE/ARABIC_RE_G above (incl.
+  // supplement/extended blocks and presentation forms) — an Arabic word
+  // from any of those ranges resets the run, same as a plain one would.
+  const tokenRe = /[A-Za-z]+|[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]+/g;
+  const tokens = [...String(value ?? "").matchAll(tokenRe)];
+  const runs = [];
+  let current = [];
+  const flush = () => {
+    if (current.length >= 2) runs.push(current);
+    current = [];
+  };
+  for (const tok of tokens) {
+    if (ARABIC_RE.test(tok[0])) {
+      flush();
+      continue;
+    }
+    const isCandidate = tok[0].length >= 3 && !LATIN_PROSE_ALLOWLIST.has(tok[0].toLowerCase());
+    if (isCandidate) current.push(tok);
+    else flush();
+  }
+  flush();
+  return runs;
+}
+
+// Removes exactly the word-runs findEnglishProseRuns flagged, leaving
+// single terms/acronyms, Arabic content, digits, and punctuation untouched
+// — same "strip only the offending part" spirit as ARABIC_RE_G's stripping
+// above, just scoped to genuine multi-word runs instead of every character.
+function stripEnglishProseRuns(value) {
+  const runs = findEnglishProseRuns(value);
+  if (!runs.length) return value;
+  const removals = runs.flat().sort((a, b) => b.index - a.index);
+  let result = String(value ?? "");
+  removals.forEach((m) => {
+    result = result.slice(0, m.index) + result.slice(m.index + m[0].length);
+  });
+  return result;
+}
+
 const PHONE_RE = /^(\+9665\d{8}|05\d{8})$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/;
 
@@ -267,6 +348,13 @@ export default function AtsCvBuilder({ accessCode }) {
   const [downloading, setDownloading] = useState(false);
   const [cvLang, setCvLang] = useState(saved?.cvLang ?? "ar");
   const [langConfirmed, setLangConfirmed] = useState(saved?.langConfirmed ?? false);
+  // Snapshot of the language that was actually confirmed/active before the
+  // user started picking a new one on the language screen — cvLang itself
+  // changes live as soon as the "العربية"/"English" option button is
+  // clicked (before "متابعة" is pressed), so confirmLanguage can't compare
+  // the target language against cvLang to detect a real change; it compares
+  // against this snapshot instead (see requestChangeLanguage below).
+  const [priorConfirmedLang, setPriorConfirmedLang] = useState(saved?.cvLang ?? "ar");
   // Gate shown right after the language screen: upload an existing CV (AI
   // pre-fills the form below) or start from a blank one. Once true, the
   // applicant is into the normal step wizard either way — this is a
@@ -329,6 +417,12 @@ export default function AtsCvBuilder({ accessCode }) {
   const t = CV_LABELS[cvLang];
 
   function confirmLanguage(lang) {
+    // Only remap when the language is actually changing versus what was
+    // last CONFIRMED — comparing against cvLang itself would never detect
+    // a change, since the "العربية"/"English" option buttons on the
+    // language screen already call setCvLang live as the user clicks
+    // between them, before "متابعة" ever runs this function.
+    if (lang !== priorConfirmedLang) remapStructuredFieldsForLanguage(lang);
     setCvLang(lang);
     setLangConfirmed(true);
   }
@@ -340,6 +434,7 @@ export default function AtsCvBuilder({ accessCode }) {
   // above never clears anything either, so re-confirming (same or a
   // different language) is lossless by construction.
   function requestChangeLanguage() {
+    setPriorConfirmedLang(cvLang);
     setLangConfirmed(false);
   }
 
@@ -385,25 +480,179 @@ export default function AtsCvBuilder({ accessCode }) {
     setSourceChosen(false);
   }
 
-  // Strips Arabic characters out of a keystroke when the CV output language
-  // is English, and flashes an inline warning near the offending field —
-  // this is what keeps English-output CVs from ending up with Arabic
-  // content mixed into the PDF.
-  function guardLangInput(id, value) {
-    if (cvLang !== "en" || !ARABIC_RE.test(value)) return value;
-    // Only the name field and custom-section titles still reject Arabic
-    // outright — a name is never transliterated/translated, and a custom
-    // section's title is a short label the applicant chose, not free-form
-    // body content, so it follows the same "must actually be in the CV's
-    // language" rule rather than being auto-translated. Every other field
-    // allows Arabic input even in English mode; the AI translates it into
-    // professional English when the CV is generated (see
-    // generateAiSummary/generateAiEnhancements).
-    if (id !== "name" && !id.startsWith("customSectionTitle-")) return value;
+  // Fields with no dropdown-backed mapping AND no AI translation step
+  // behind them — a name is never transliterated, an "Other" custom value
+  // has no fixed list to map through, and job title/employer are free text
+  // with no AI polish pass over them at all (only bullets/achievements/
+  // gradProject/custom-section points go through enhance-items). All of
+  // these follow the same "must actually already be in the CV's language"
+  // rule, blocked outright in BOTH directions — see guardLangInput below.
+  // Every other field (summary, bullets, achievements, gradProject,
+  // custom-section points, course/certification names, skills/roles tags)
+  // stays fully open in both directions: English mode already relies on
+  // generateAiSummary/generateAiEnhancements to translate Arabic input, and
+  // those same two routes translate just as faithfully in the other
+  // direction (their prompts are language-agnostic — "translate ... into
+  // ${languageName}", not hardcoded to English), so Arabic mode gets the
+  // same AI safety net English mode always has.
+  function isStrictLangFieldId(id) {
+    if (id === "name" || id === "city") return true;
+    if (id.startsWith("customSectionTitle-")) return true;
+    if (/^edu-\d+-(degree|specialization|school)$/.test(id)) return true;
+    if (/^lang-\d+-name$/.test(id)) return true;
+    if (/^exp-\d+-(title|employer)$/.test(id)) return true;
+    return false;
+  }
+
+  // Fields where a language guard would be actively wrong to apply:
+  // inherently-Latin fields (email/links/phone), fields never rendered
+  // into the PDF at all (target roles/cities, internal notes — platform-
+  // only, per the earlier "Change 1" work), and skills/tools tags, which
+  // legitimately mix scripts freely (see LATIN_PROSE_ALLOWLIST) and are
+  // never AI-translated either way — same "not part of this guard" as
+  // course/certification names, which are proper nouns as often as not.
+  function isExemptFromLangGuard(id) {
+    return (
+      id === "email" || id === "linkedin" || id === "phone" ||
+      id === "techSkills" || id === "softSkills" || id === "targetRoles" || id === "targetCities" ||
+      id === "internalNotes" ||
+      id.startsWith("course-") || id.startsWith("cert-")
+    );
+  }
+
+  function flashBlockedField(id) {
     setBlockedField(id);
     window.clearTimeout(guardLangInput._t);
     guardLangInput._t = window.setTimeout(() => setBlockedField((cur) => (cur === id ? null : cur)), 2000);
-    return value.replace(ARABIC_RE_G, "");
+  }
+
+  // Shared warning row for every guarded field (field/fieldArea/
+  // selectWithOther/multiSelectWithOther/searchableSelect/listInput) —
+  // direction-aware by construction: cvLang alone tells us which guard
+  // fired, since guardLangInput only ever blocks the OTHER script.
+  function langGuardNotice(id) {
+    if (blockedField !== id) return null;
+    return <div style={warnStyle}>{cvLang === "en" ? L.arabicBlockedNotice : L.englishBlockedNotice}</div>;
+  }
+
+  // Strips Arabic (English mode) or English (Arabic mode) out of a
+  // keystroke and flashes an inline warning near the offending field —
+  // this is what keeps a CV's output language from ending up with the
+  // wrong script mixed into fields that have no AI translation fallback.
+  // Digits are normalized to Western numerals first, in both languages,
+  // regardless of what else this call does (see normalizeDigits above).
+  function guardLangInput(id, rawValue) {
+    const value = normalizeDigits(rawValue);
+    if (isExemptFromLangGuard(id)) return value;
+
+    if (cvLang === "en" && ARABIC_RE.test(value)) {
+      if (!isStrictLangFieldId(id)) return value;
+      flashBlockedField(id);
+      return value.replace(ARABIC_RE_G, "");
+    }
+
+    if (cvLang === "ar" && LATIN_RE.test(value)) {
+      if (isStrictLangFieldId(id)) {
+        flashBlockedField(id);
+        return value.replace(LATIN_RE_G, "");
+      }
+      // Tier-2 prose fields: detect and flash the notice live, but don't
+      // mutate the value on every keystroke — see stripProseOnBlur below
+      // for why the actual strip waits until the field is left.
+      if (findEnglishProseRuns(value).length) flashBlockedField(id);
+      return value;
+    }
+
+    return value;
+  }
+
+  // Companion to guardLangInput's Tier-2 Arabic-mode branch above. Word-run
+  // detection is inherently context-dependent — whether an earlier word is
+  // part of a "run" can change retroactively once a later word completes
+  // it — so stripping live, keystroke by keystroke, can remove text from
+  // earlier in the field while the user is still typing later words,
+  // sometimes leaving stray fragments behind rather than a clean result.
+  // Evaluating the complete, final text in one pass on blur avoids that
+  // entirely and always produces a clean strip.
+  function stripProseOnBlur(id, value) {
+    if (cvLang !== "ar" || isStrictLangFieldId(id) || isExemptFromLangGuard(id)) return value;
+    const stripped = stripEnglishProseRuns(value);
+    if (stripped !== value) flashBlockedField(id);
+    return stripped;
+  }
+
+  // Deterministic, no-AI remap of every dropdown-backed field's ALREADY-
+  // STORED value to its exact equivalent in the new language's list —
+  // reuses the same matchOption/matchExact helpers the CV-upload
+  // extraction path already relies on (see applyExtractedData below), just
+  // run here on a language switch instead of on freshly-extracted data.
+  // Without this, a value picked from one language's list (e.g. "الرياض")
+  // would become an orphaned string once the option list switches to the
+  // other language — and since these fields are never AI-translated, an
+  // unmapped leftover would render directly into the PDF in the wrong
+  // language. "Other" custom text has no list to map through, so it
+  // follows the same block-don't-translate rule as isStrictLangFieldId —
+  // blanked out if it's now in the wrong script, left alone otherwise.
+  function remapStructuredFieldsForLanguage(newLang) {
+    const wrongScriptRe = newLang === "en" ? ARABIC_RE : LATIN_RE;
+    const newCityOptions = newLang === "en" ? EN_CITIES : AR_CITIES;
+    const newDegreeOptions = newLang === "en" ? EN_DEGREES : AR_DEGREES;
+    const newMajorOptions = newLang === "en" ? EN_MAJORS : AR_MAJORS;
+    const newUniversityOptions = newLang === "en" ? EN_UNIVERSITIES : AR_UNIVERSITIES;
+    const newLanguageOptions = newLang === "en" ? EN_LANGUAGE_OPTIONS : AR_LANGUAGE_OPTIONS;
+    const newLevelOptions = newLang === "en" ? EN_LEVELS : AR_LEVELS;
+
+    const remapChoice = (choice, custom, arList, enList, newOptions) => {
+      if (choice === OTHER) return { choice, custom: wrongScriptRe.test(custom || "") ? "" : custom };
+      if (!choice) return { choice, custom };
+      // matchOption returns { choice: OTHER, custom: value } when it can't
+      // find a match — a valid pre-existing choice always came from one of
+      // arList/enList in the first place, so this shouldn't happen, but
+      // leaving the original choice untouched is the safe fallback either
+      // way (never silently turn a real selection into an empty "Other").
+      const m = matchOption(choice, arList, enList, newOptions);
+      return m.choice && m.choice !== OTHER ? { choice: m.choice, custom: "" } : { choice, custom };
+    };
+
+    setForm((f) => {
+      const city = remapChoice(f.cityChoice, f.cityCustom, AR_CITIES, EN_CITIES, newCityOptions);
+      return {
+        ...f,
+        cityChoice: city.choice, cityCustom: city.custom,
+        name: wrongScriptRe.test(f.name || "") ? "" : f.name,
+      };
+    });
+
+    setEducation((prev) => prev.map((x) => {
+      const degree = remapChoice(x.degreeChoice, x.degreeCustom, AR_DEGREES, EN_DEGREES, newDegreeOptions);
+      const major = remapChoice(x.specializationChoice, x.specializationCustom, AR_MAJORS, EN_MAJORS, newMajorOptions);
+      const school = remapChoice(x.schoolChoice, x.schoolCustom, AR_UNIVERSITIES, EN_UNIVERSITIES, newUniversityOptions);
+      return {
+        ...x,
+        degreeChoice: degree.choice, degreeCustom: degree.custom,
+        specializationChoice: major.choice, specializationCustom: major.custom,
+        schoolChoice: school.choice, schoolCustom: school.custom,
+      };
+    }));
+
+    setLanguageEntries((prev) => prev.map((l) => {
+      const lang = remapChoice(l.langChoice, l.langCustom, AR_LANGUAGE_OPTIONS, EN_LANGUAGE_OPTIONS, newLanguageOptions);
+      const level = l.level ? (matchExact(l.level, AR_LEVELS, EN_LEVELS, newLevelOptions) || l.level) : l.level;
+      return { ...l, langChoice: lang.choice, langCustom: lang.custom, level };
+    }));
+
+    // Job title / employer have no dropdown to remap through either — same
+    // block-don't-translate rule as an Other-custom field above.
+    setExperiences((prev) => prev.map((x) => ({
+      ...x,
+      title: wrongScriptRe.test(x.title || "") ? "" : x.title,
+      employer: wrongScriptRe.test(x.employer || "") ? "" : x.employer,
+    })));
+
+    setCustomSections((prev) => prev.map((s) => ({
+      ...s,
+      title: wrongScriptRe.test(s.title || "") ? "" : s.title,
+    })));
   }
 
   function field(id, label, val, onChange, opts = {}) {
@@ -413,14 +662,19 @@ export default function AtsCvBuilder({ accessCode }) {
         <input
           value={val}
           onChange={(e) => {
-            const raw = opts.numeric ? e.target.value.replace(/[^\d]/g, "") : e.target.value;
+            // Normalize Eastern Arabic-Indic digits BEFORE stripping
+            // non-digits — otherwise a year/count typed on an Arabic
+            // keyboard (e.g. "٢٠٢٤") would have every digit silently
+            // deleted (none of them match \d) instead of converted.
+            const raw = opts.numeric ? normalizeDigits(e.target.value).replace(/[^\d]/g, "") : e.target.value;
             onChange({ target: { value: guardLangInput(id, raw) } });
           }}
+          onBlur={(e) => onChange({ target: { value: stripProseOnBlur(id, e.target.value) } })}
           placeholder={opts.ph}
           style={inputStyle}
           inputMode={opts.numeric ? "numeric" : undefined}
         />
-        {blockedField === id && <div style={warnStyle}>الاسم يجب إدخاله بالأحرف الإنجليزية فقط للسيرة الإنجليزية (بدون ترجمة).</div>}
+        {langGuardNotice(id)}
         {opts.error && <div style={warnStyle}>{opts.error}</div>}
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
       </div>
@@ -431,8 +685,15 @@ export default function AtsCvBuilder({ accessCode }) {
     return (
       <div style={{ marginBottom: 14 }}>
         <label style={labelStyle}>{label} {opts.req && <span style={{ color: "#1a3a5c" }}>*</span>}</label>
-        <textarea value={val} onChange={(e) => onChange({ target: { value: guardLangInput(id, e.target.value) } })} placeholder={opts.ph} rows={opts.rows || 4} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.8 }} />
-        {blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        <textarea
+          value={val}
+          onChange={(e) => onChange({ target: { value: guardLangInput(id, e.target.value) } })}
+          onBlur={(e) => onChange({ target: { value: stripProseOnBlur(id, e.target.value) } })}
+          placeholder={opts.ph}
+          rows={opts.rows || 4}
+          style={{ ...inputStyle, resize: "vertical", lineHeight: 1.8 }}
+        />
+        {langGuardNotice(id)}
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
       </div>
     );
@@ -475,7 +736,7 @@ export default function AtsCvBuilder({ accessCode }) {
             style={{ ...inputStyle, marginTop: 8 }}
           />
         )}
-        {isOther && blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {isOther && langGuardNotice(id)}
         {missingRequired && opts.otherRequiredMsg && <div style={warnStyle}>{opts.otherRequiredMsg}</div>}
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
       </div>
@@ -529,7 +790,7 @@ export default function AtsCvBuilder({ accessCode }) {
             style={{ ...inputStyle, marginTop: 8 }}
           />
         )}
-        {hasOther && blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {hasOther && langGuardNotice(id)}
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
       </div>
     );
@@ -580,7 +841,7 @@ export default function AtsCvBuilder({ accessCode }) {
             style={{ ...inputStyle, marginTop: 8 }}
           />
         )}
-        {isOther && blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {isOther && langGuardNotice(id)}
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
       </div>
     );
@@ -641,7 +902,7 @@ export default function AtsCvBuilder({ accessCode }) {
             ))}
           </div>
         )}
-        {blockedField === id && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+        {langGuardNotice(id)}
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
       </div>
     );
@@ -694,6 +955,11 @@ export default function AtsCvBuilder({ accessCode }) {
                     copy[i] = guardLangInput(itemId, e.target.value);
                     setItems(copy);
                   }}
+                  onBlur={(e) => {
+                    const copy = [...items];
+                    copy[i] = stripProseOnBlur(itemId, e.target.value);
+                    setItems(copy);
+                  }}
                   placeholder={opts.ph}
                   style={{ ...inputStyle, flex: 1 }}
                 />
@@ -701,7 +967,7 @@ export default function AtsCvBuilder({ accessCode }) {
                 <button type="button" onClick={() => move(i, 1)} disabled={i === items.length - 1} style={{ ...btnIcon, opacity: i === items.length - 1 ? 0.3 : 1 }} aria-label="down"><ChevronDown size={15} color={THEME.text} /></button>
                 <button type="button" onClick={() => setItems(items.filter((_, x) => x !== i))} style={btnIcon} aria-label="remove"><Trash2 size={15} color="#b3261e" /></button>
               </div>
-              {blockedField === itemId && <div style={warnStyle}>الرجاء الإدخال بالإنجليزية للسيرة الإنجليزية</div>}
+              {langGuardNotice(itemId)}
             </div>
           );
         })}
@@ -1068,6 +1334,8 @@ export default function AtsCvBuilder({ accessCode }) {
     methodChangeWarningBody: "Some data you've already entered may be lost — do you want to continue?",
     methodChangeWarningConfirm: "Yes, continue",
     methodChangeWarningCancel: "Cancel",
+    arabicBlockedNotice: "This field must be entered in English only for the English CV (no translation).",
+    englishBlockedNotice: "This field must be entered in Arabic only for the Arabic CV (no translation).",
   } : {
     city: "المدينة", experienceHeading: "الخبرات العملية والتدريب", expCard: "خبرة",
     jobTitle: "المسمى الوظيفي", employer: "جهة العمل", from: "من", to: "إلى", month: "الشهر", year: "السنة",
@@ -1122,6 +1390,8 @@ export default function AtsCvBuilder({ accessCode }) {
     methodChangeWarningBody: "سيتم فقدان البيانات المُدخلة — هل تريد المتابعة؟",
     methodChangeWarningConfirm: "نعم، متابعة",
     methodChangeWarningCancel: "إلغاء",
+    arabicBlockedNotice: "يجب إدخال هذا الحقل بالأحرف الإنجليزية فقط للسيرة الإنجليزية (بدون ترجمة).",
+    englishBlockedNotice: "يجب إدخال هذا الحقل بالأحرف العربية فقط للسيرة العربية (بدون ترجمة).",
   };
 
   // ── Validation (gentle, non-blocking) ──
@@ -1766,10 +2036,14 @@ export default function AtsCvBuilder({ accessCode }) {
                     )}
                     <AutoTextarea
                       value={form.summary}
-                      onChange={(e) => setForm((f) => ({ ...f, summary: e.target.value }))}
+                      onChange={(e) => setForm((f) => ({ ...f, summary: guardLangInput("summary", e.target.value) }))}
+                      onBlur={(e) => setForm((f) => ({ ...f, summary: stripProseOnBlur("summary", e.target.value) }))}
                       placeholder={t.summaryPlaceholder}
                       dir={cvDir}
                     />
+                    {blockedField === "summary" && (
+                      <div className="no-print" style={warnStyle}>{cvLang === "en" ? L.arabicBlockedNotice : L.englishBlockedNotice}</div>
+                    )}
                     <div className="no-print" style={{ fontSize: 10.5, color: C.slate, marginTop: 3 }}>{t.summaryEditHint}</div>
                   </>
                 )}
@@ -2363,7 +2637,7 @@ function Section({ title, children }) {
 // project). A local ref+effect is needed (not just an onInput handler)
 // because `value` can change programmatically — an AI result landing, or
 // a saved session being restored — not just from user keystrokes.
-function AutoTextarea({ value, onChange, placeholder, dir }) {
+function AutoTextarea({ value, onChange, onBlur, placeholder, dir }) {
   const ref = useRef(null);
   useEffect(() => {
     const el = ref.current;
@@ -2381,7 +2655,7 @@ function AutoTextarea({ value, onChange, placeholder, dir }) {
       dir={dir}
       style={{ ...pBody, width: "100%", border: "1px dashed transparent", borderRadius: 4, padding: 2, resize: "none", overflow: "hidden", fontFamily: "inherit", background: "transparent" }}
       onFocus={(e) => { e.target.style.borderColor = THEME.border; }}
-      onBlur={(e) => { e.target.style.borderColor = "transparent"; }}
+      onBlur={(e) => { e.target.style.borderColor = "transparent"; onBlur?.(e); }}
     />
   );
 }
