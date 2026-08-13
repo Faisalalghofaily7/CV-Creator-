@@ -1,8 +1,20 @@
 import { NextResponse } from "next/server";
 import { APIError } from "@anthropic-ai/sdk";
 import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
+import { retryWithBackoff } from "../../../lib/aiRetry";
 
 export const runtime = "nodejs";
+// Comfortably above the bounded retry window (see PER_ATTEMPT_TIMEOUT_MS
+// and retryWithBackoff's default ~40s window below) plus headroom for an
+// in-flight attempt that was still running when the window closed.
+export const maxDuration = 75;
+
+// Per-attempt timeout, not the total retry budget — the SDK's own default
+// (10 minutes) would let a single hung attempt swallow the entire bounded
+// window on its own. maxRetries: 0 disables the SDK's built-in retry too,
+// so retryWithBackoff has exclusive, observable control over every retry
+// (one call to .create() below is exactly one logged attempt).
+const PER_ATTEMPT_TIMEOUT_MS = 20_000;
 
 // Defensive cap — a real CV's bullets/achievements/graduation projects
 // never come close to this; it just bounds the request if something odd
@@ -20,15 +32,21 @@ Rules:
 - Return the results in the same order, one per line, no numbering, no headings, no preamble.`;
 }
 
-// One request to the model, one parse attempt — split out so POST can call
-// it twice (see the retry below) without duplicating either.
-async function requestEnhancement(client, lang, numbered) {
-  const message = await client.messages.create({
-    model: CLAUDE_MODEL,
-    max_tokens: 1200,
-    system: buildSystemPrompt(lang),
-    messages: [{ role: "user", content: numbered }],
-  });
+// One request to the model, one parse attempt, throwing on anything that
+// isn't a clean, matching-length result — retryWithBackoff treats that
+// exactly the same as a network/HTTP failure, so a wrong item count and a
+// dropped connection both just mean "this attempt didn't work, try again"
+// within the same bounded window.
+async function requestEnhancement(client, lang, numbered, expectedCount) {
+  const message = await client.messages.create(
+    {
+      model: CLAUDE_MODEL,
+      max_tokens: 1200,
+      system: buildSystemPrompt(lang),
+      messages: [{ role: "user", content: numbered }],
+    },
+    { maxRetries: 0, timeout: PER_ATTEMPT_TIMEOUT_MS }
+  );
   const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
   const lines = raw
     .split("\n")
@@ -37,7 +55,11 @@ async function requestEnhancement(client, lang, numbered) {
     // Defensive: strip any leading "1. " / "1)" the model adds despite
     // being told not to, so a stray numbering artifact never leaks in.
     .map((l) => l.replace(/^\d+[.).]\s*/, ""));
-  return { lines, raw };
+
+  if (lines.length !== expectedCount) {
+    throw new Error(`Expected ${expectedCount} enhanced lines, got ${lines.length}`);
+  }
+  return lines;
 }
 
 export async function POST(request) {
@@ -58,36 +80,28 @@ export async function POST(request) {
   // though the numbering itself is stripped from what we send back.
   const numbered = items.map((it, i) => `${i + 1}. ${it}`).join("\n");
 
-  try {
-    const client = getAnthropicClient();
+  const client = getAnthropicClient();
+  const result = await retryWithBackoff(
+    () => requestEnhancement(client, lang, numbered, items.length),
+    { logTag: "[ENHANCE-ITEMS-RETRY]" }
+  );
 
-    // The model is asked for exactly one output line per input item; that
-    // count occasionally comes back off by one or two on a large batch (a
-    // merged line, a stray blank line) — one retry clears up most of those
-    // before this is treated as a real failure.
-    let lines = [];
-    let raw = "";
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      ({ lines, raw } = await requestEnhancement(client, lang, numbered));
-      if (lines.length === items.length) {
-        return NextResponse.json({ items: lines });
-      }
-      console.warn(`[ENHANCE-ITEMS-ERROR] attempt ${attempt}: expected ${items.length} lines, got ${lines.length}`);
-    }
-
-    console.error("[ENHANCE-ITEMS-ERROR] giving up after 2 attempts", { expected: items.length, got: lines.length, rawOutput: raw });
-  } catch (err) {
-    console.error("[ENHANCE-ITEMS-ERROR]", {
-      message: err?.message,
-      name: err?.name,
-      stack: err?.stack,
-      ...(err instanceof APIError && {
-        anthropicStatus: err.status,
-        anthropicErrorType: err.type,
-        anthropicResponseBody: err.error,
-      }),
-    });
+  if (result.ok) {
+    return NextResponse.json({ items: result.result });
   }
+
+  console.error("[ENHANCE-ITEMS-ERROR]", {
+    message: result.error?.message,
+    name: result.error?.name,
+    stack: result.error?.stack,
+    attempts: result.attempts,
+    stoppedEarly: !!result.stoppedEarly,
+    ...(result.error instanceof APIError && {
+      anthropicStatus: result.error.status,
+      anthropicErrorType: result.error.type,
+      anthropicResponseBody: result.error.error,
+    }),
+  });
 
   // Never a 500 for a best-effort AI polish, and never a garbled/partial
   // array either — the client already seeds every item with its original

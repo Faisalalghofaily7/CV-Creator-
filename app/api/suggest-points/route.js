@@ -1,7 +1,20 @@
 import { NextResponse } from "next/server";
 import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
+import { retryWithBackoff } from "../../../lib/aiRetry";
 
 export const runtime = "nodejs";
+// Comfortably above RETRY_WINDOW_MS plus headroom for an in-flight attempt
+// still running when the window closed.
+export const maxDuration = 20;
+
+// Lighter treatment than the main preview-generation routes: this is a
+// small, optional, one-off "give me some ideas" click, not something the
+// whole preview screen is waiting on — a shorter bounded window (a couple
+// of quick retries) is enough, and a failure just leaves the existing
+// "اقترح لي" button clickable again rather than needing its own recovery
+// flow client-side.
+const RETRY_WINDOW_MS = 12_000;
+const PER_ATTEMPT_TIMEOUT_MS = 8_000;
 
 const SUGGESTION_COUNT = 5;
 
@@ -44,24 +57,38 @@ export async function POST(request) {
     const targetRole = typeof body.targetRole === "string" ? body.targetRole.trim() : "";
 
     const client = getAnthropicClient();
-    const message = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 700,
-      system: buildSystemPrompt(lang, kind),
-      messages: [{ role: "user", content: buildContext({ jobTitle, employer, yearsOfExperience, specialization, targetRole }) }],
-    });
+    const result = await retryWithBackoff(
+      async () => {
+        const message = await client.messages.create(
+          {
+            model: CLAUDE_MODEL,
+            max_tokens: 700,
+            system: buildSystemPrompt(lang, kind),
+            messages: [{ role: "user", content: buildContext({ jobTitle, employer, yearsOfExperience, specialization, targetRole }) }],
+          },
+          { maxRetries: 0, timeout: PER_ATTEMPT_TIMEOUT_MS }
+        );
 
-    const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
-    const suggestions = raw
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((l) => l.replace(/^[-•\d.).\s]+/, "").trim())
-      .filter(Boolean);
+        const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
+        const suggestions = raw
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .map((l) => l.replace(/^[-•\d.).\s]+/, "").trim())
+          .filter(Boolean);
 
-    if (!suggestions.length) throw new Error("Empty response from Claude");
+        if (!suggestions.length) throw new Error("Empty response from Claude");
+        return suggestions;
+      },
+      { logTag: "[SUGGEST-POINTS-RETRY]", windowMs: RETRY_WINDOW_MS }
+    );
 
-    return NextResponse.json({ suggestions });
+    if (!result.ok) {
+      console.error("Failed to generate point suggestions:", result.error?.message || result.error, `(${result.attempts} attempt(s))`);
+      return NextResponse.json({ error: "تعذّر توليد اقتراحات تلقائياً." }, { status: 500 });
+    }
+
+    return NextResponse.json({ suggestions: result.result });
   } catch (err) {
     console.error("Failed to generate point suggestions:", err);
     return NextResponse.json({ error: "تعذّر توليد اقتراحات تلقائياً." }, { status: 500 });

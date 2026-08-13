@@ -1,8 +1,23 @@
 import { NextResponse } from "next/server";
 import mammoth from "mammoth";
 import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
+import { retryWithBackoff } from "../../../lib/aiRetry";
 
 export const runtime = "nodejs";
+// Comfortably above the bounded retry window (see PER_ATTEMPT_TIMEOUT_MS
+// and retryWithBackoff's default ~40s window below) plus headroom for an
+// in-flight attempt that was still running when the window closed.
+export const maxDuration = 90;
+
+// Per-attempt timeout, not the total retry budget — the SDK's own default
+// (10 minutes) would let a single hung attempt swallow the entire bounded
+// window on its own. maxRetries: 0 disables the SDK's built-in retry too,
+// so retryWithBackoff has exclusive, observable control over every retry
+// (one call to .create() below is exactly one logged attempt). Longer than
+// the other AI routes' per-attempt budget — a full CV extraction with up
+// to 16000 output tokens genuinely takes longer than a short summary or a
+// handful of polished lines.
+const PER_ATTEMPT_TIMEOUT_MS = 25_000;
 
 // Conservative cap — comfortably covers a real multi-page CV while staying
 // well under Vercel's inbound request-body limit (~4.5MB on Hobby) and
@@ -95,34 +110,60 @@ export async function POST(request) {
     }
 
     const client = getAnthropicClient();
-    const message = await client.messages.create({
-      model: CLAUDE_MODEL,
-      // A detailed, multi-role real-world CV can easily need several
-      // thousand output tokens for its JSON — 4096 was cutting genuine CVs
-      // off mid-string (truncated/invalid JSON). This is comfortably above
-      // what even a long, senior-level CV should require.
-      max_tokens: 16000,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: messageContent }],
-    });
 
-    const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
-    const jsonText = stripJsonFences(raw);
+    // Bounded, backed-off retry: any failure — thrown error (network,
+    // timeout, any HTTP status) OR an empty/unparseable response — retries
+    // within the window; only an auth/bad-request error skips straight to
+    // the fallback below (see retryWithBackoff). A parse failure carries
+    // its raw-text preview + stop_reason along on the thrown error so the
+    // final failure log below still has that diagnostic detail.
+    const extractResult = await retryWithBackoff(
+      async () => {
+        const message = await client.messages.create(
+          {
+            model: CLAUDE_MODEL,
+            // A detailed, multi-role real-world CV can easily need several
+            // thousand output tokens for its JSON — 4096 was cutting genuine
+            // CVs off mid-string (truncated/invalid JSON). This is
+            // comfortably above what even a long, senior-level CV should
+            // require.
+            max_tokens: 16000,
+            system: SYSTEM_PROMPT,
+            messages: [{ role: "user", content: messageContent }],
+          },
+          { maxRetries: 0, timeout: PER_ATTEMPT_TIMEOUT_MS }
+        );
 
-    let data;
-    try {
-      data = JSON.parse(jsonText);
-    } catch (err) {
-      console.error(
-        "Failed to parse CV extraction JSON:", err,
-        "stop_reason:", message.stop_reason,
-        "raw length:", raw.length,
-        "raw (first 500 chars):", raw.slice(0, 500)
-      );
+        const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
+        if (!raw) throw new Error("Empty response from Claude");
+
+        const jsonText = stripJsonFences(raw);
+        try {
+          return JSON.parse(jsonText);
+        } catch (parseErr) {
+          const err = new Error(`Failed to parse extraction JSON: ${parseErr.message}`);
+          err.rawPreview = raw.slice(0, 500);
+          err.stopReason = message.stop_reason;
+          throw err;
+        }
+      },
+      { logTag: "[EXTRACT-CV-RETRY]" }
+    );
+
+    if (!extractResult.ok) {
+      console.error("[EXTRACT-CV-ERROR]", {
+        message: extractResult.error?.message,
+        name: extractResult.error?.name,
+        stack: extractResult.error?.stack,
+        attempts: extractResult.attempts,
+        stoppedEarly: !!extractResult.stoppedEarly,
+        rawPreview: extractResult.error?.rawPreview,
+        stopReason: extractResult.error?.stopReason,
+      });
       return NextResponse.json({ error: "تعذّر قراءة بيانات السيرة الذاتية تلقائياً من الملف. يمكنك المتابعة وتعبئة النموذج يدوياً." }, { status: 502 });
     }
 
-    return NextResponse.json({ data });
+    return NextResponse.json({ data: extractResult.result });
   } catch (err) {
     console.error("CV extraction failed:", err);
     return NextResponse.json({ error: "تعذّر معالجة الملف. حاول مرة أخرى أو ابدأ من نموذج فارغ." }, { status: 500 });

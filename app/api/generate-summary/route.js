@@ -1,8 +1,20 @@
 import { NextResponse } from "next/server";
 import { APIError } from "@anthropic-ai/sdk";
 import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
+import { retryWithBackoff } from "../../../lib/aiRetry";
 
 export const runtime = "nodejs";
+// Comfortably above the bounded retry window (see PER_ATTEMPT_TIMEOUT_MS
+// and retryWithBackoff's default ~40s window below) plus headroom for an
+// in-flight attempt that was still running when the window closed.
+export const maxDuration = 75;
+
+// Per-attempt timeout, not the total retry budget — the SDK's own default
+// (10 minutes) would let a single hung attempt swallow the entire bounded
+// window on its own. maxRetries: 0 disables the SDK's built-in retry too,
+// so retryWithBackoff has exclusive, observable control over every retry
+// (one call to .create() below is exactly one logged attempt).
+const PER_ATTEMPT_TIMEOUT_MS = 15_000;
 
 // Hard ceiling enforced both in the prompt and, deterministically, in code
 // below (a prompt instruction alone doesn't reliably hold on longer/senior
@@ -183,20 +195,51 @@ export async function POST(request) {
     const softSkills = typeof body.softSkills === "string" ? body.softSkills.trim() : "";
 
     const client = getAnthropicClient();
-    const message = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 500,
-      system: buildSystemPrompt(lang),
-      messages: [
-        {
-          role: "user",
-          content: buildApplicantData({ targetRoles, yearsOfExperience, experiences, education, techSkills, softSkills }),
-        },
-      ],
-    });
 
-    const rawSummary = message.content?.find((block) => block.type === "text")?.text?.trim();
-    if (!rawSummary) throw new Error("Empty response from Claude");
+    // Bounded, backed-off retry: any failure (thrown error — network,
+    // timeout, any HTTP status, malformed response — OR an empty text
+    // response) retries within the window; only an auth/bad-request error
+    // skips straight to the fallback below (see retryWithBackoff).
+    const genResult = await retryWithBackoff(
+      async () => {
+        const message = await client.messages.create(
+          {
+            model: CLAUDE_MODEL,
+            max_tokens: 500,
+            system: buildSystemPrompt(lang),
+            messages: [
+              {
+                role: "user",
+                content: buildApplicantData({ targetRoles, yearsOfExperience, experiences, education, techSkills, softSkills }),
+              },
+            ],
+          },
+          { maxRetries: 0, timeout: PER_ATTEMPT_TIMEOUT_MS }
+        );
+        const text = message.content?.find((block) => block.type === "text")?.text?.trim();
+        if (!text) throw new Error("Empty response from Claude");
+        return text;
+      },
+      { logTag: "[SUMMARY-RETRY]" }
+    );
+
+    if (!genResult.ok) {
+      console.error("[AI-SUMMARY-ERROR]", {
+        message: genResult.error?.message,
+        name: genResult.error?.name,
+        stack: genResult.error?.stack,
+        attempts: genResult.attempts,
+        stoppedEarly: !!genResult.stoppedEarly,
+        ...(genResult.error instanceof APIError && {
+          anthropicStatus: genResult.error.status,
+          anthropicErrorType: genResult.error.type,
+          anthropicResponseBody: genResult.error.error,
+        }),
+      });
+      return NextResponse.json({ summary: "", error: "تعذّر إنشاء الملخص المهني تلقائياً." });
+    }
+
+    const rawSummary = genResult.result;
 
     // Normalize before counting/capping/returning — see normalizeSummaryText
     // above for why embedded newlines must be collapsed before the word
