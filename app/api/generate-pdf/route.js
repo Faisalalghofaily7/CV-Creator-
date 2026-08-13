@@ -59,6 +59,49 @@ async function getBrowser() {
   return cachedBrowser;
 }
 
+// page.setContent(..., {waitUntil:"load"}) does NOT guarantee the embedded
+// @font-face fonts (Tajawal, base64 data: URIs, split into separate
+// Arabic-range/Latin-range/regular/bold faces — see cvHtmlTemplate.js) have
+// actually finished loading by the time it resolves: font decoding runs on
+// its own schedule, off the "load" event. Calling page.pdf() before that
+// finishes can print text in a not-yet-ready face as completely invisible
+// instead of falling back to a visible font — reproduced directly (~1 in 9
+// local renders raced blank). document.fonts.ready is the standard fix,
+// but as belt-and-suspenders: (1) it's raced against a short timeout so a
+// pathological hang here can never block the whole request past
+// maxDuration, and (2) every declared face is explicitly told to load by
+// name afterward — document.fonts.ready only resolves for fonts already
+// requested by layout at the time it's read, so a face the initial layout
+// didn't happen to touch yet could still be missed by (1) alone.
+const FONT_READY_TIMEOUT_MS = 5000;
+async function ensureFontsReady(page) {
+  await Promise.race([
+    page.evaluate(() => document.fonts.ready),
+    new Promise((resolve) => setTimeout(resolve, FONT_READY_TIMEOUT_MS)),
+  ]);
+
+  // Explicitly (re-)request every weight, with a sample string covering
+  // both the Arabic-range and Latin-range faces, so all four @font-face
+  // variants are force-loaded regardless of what the initial layout pass
+  // happened to touch.
+  const allLoaded = await page.evaluate(async () => {
+    const sample = "أA"; // one Arabic + one Latin codepoint
+    await Promise.all([
+      document.fonts.load("400 13px Tajawal", sample).catch(() => {}),
+      document.fonts.load("700 13px Tajawal", sample).catch(() => {}),
+    ]);
+    return document.fonts.status === "loaded";
+  });
+
+  if (!allLoaded) {
+    // Never seen in testing, but if it ever happens, this is exactly the
+    // condition that used to ship a blank CV — worth knowing about even
+    // though we still proceed (a slightly-late font beats blocking the
+    // customer's download indefinitely).
+    console.warn("[PDF-FONTS] fonts not fully loaded after the wait — printing anyway.");
+  }
+}
+
 export async function POST(request) {
   const t0 = Date.now();
   const timings = {};
@@ -100,6 +143,10 @@ export async function POST(request) {
     // those inline resources) has finished parsing.
     await page.setContent(html, { waitUntil: "load" });
     timings.render = Date.now() - tMark;
+
+    tMark = Date.now();
+    await ensureFontsReady(page);
+    timings.fontsReady = Date.now() - tMark;
 
     tMark = Date.now();
     const pdfBuffer = await page.pdf({
