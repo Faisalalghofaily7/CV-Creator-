@@ -1836,6 +1836,11 @@ export default function AtsCvBuilder({ accessCode }) {
             <div style={{ color: "#ffffff", fontSize: 19, fontWeight: 700 }}>منشئ السيرة الذاتية — ATS</div>
             <div style={{ color: THEME.soft, fontSize: 12.5 }}>عبّئ بياناتك واحصل على سيرة بصيغة PDF متوافقة مع أنظمة التوظيف</div>
           </div>
+          <img
+            src="/wazifti-logo.jpeg"
+            alt="وظيفتي"
+            style={{ height: 34, maxHeight: 34, width: "auto", maxWidth: 110, objectFit: "contain", borderRadius: 6, background: "#ffffff", padding: "3px 6px", marginInlineStart: "auto", flexShrink: 0 }}
+          />
         </div>
       </div>
 

@@ -38,7 +38,12 @@ export default function AccessGate({ onContinue }) {
   }
 
   return (
-    <div dir="rtl" style={{ minHeight: "100vh", background: C.paper, fontFamily: "'Segoe UI', Tahoma, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div dir="rtl" style={{ minHeight: "100vh", background: C.paper, fontFamily: "'Segoe UI', Tahoma, sans-serif", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <img
+        src="/wazifti-logo.jpeg"
+        alt="وظيفتي"
+        style={{ height: 72, maxHeight: "12vh", width: "auto", maxWidth: "100%", objectFit: "contain", marginBottom: 24 }}
+      />
       <form onSubmit={handleSubmit} style={{ width: "100%", maxWidth: 400, background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 12, padding: 28, boxShadow: "0 1px 3px rgba(20,40,60,.06)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
           <div style={{ background: C.ink, width: 40, height: 40, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
