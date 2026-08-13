@@ -272,6 +272,11 @@ export default function AtsCvBuilder({ accessCode }) {
   // applicant is into the normal step wizard either way — this is a
   // one-time fork, not a separate flow.
   const [sourceChosen, setSourceChosen] = useState(saved?.sourceChosen ?? false);
+  // Additive back/change navigation for the language + method choices made
+  // before the form itself (see requestChangeMethod/confirmChangeMethod
+  // below) — purely UI state, never touches the form/experiences/etc. data
+  // itself, so nothing here can affect the existing filling logic.
+  const [showMethodChangeWarning, setShowMethodChangeWarning] = useState(false);
   const [showUploadPanel, setShowUploadPanel] = useState(false);
   const [cvFile, setCvFile] = useState(null);
   const [uploadingCv, setUploadingCv] = useState(false);
@@ -326,6 +331,58 @@ export default function AtsCvBuilder({ accessCode }) {
   function confirmLanguage(lang) {
     setCvLang(lang);
     setLangConfirmed(true);
+  }
+
+  // Additive back/change navigation (language + filling method), reachable
+  // from within the form itself. Deliberately does not touch any existing
+  // form state — going back to the language screen just re-shows it while
+  // every already-entered field stays exactly as it is; confirmLanguage
+  // above never clears anything either, so re-confirming (same or a
+  // different language) is lossless by construction.
+  function requestChangeLanguage() {
+    setLangConfirmed(false);
+  }
+
+  // Cheap, deliberately broad "is there anything to lose" check — used only
+  // to decide whether the method-change warning needs to show at all, not
+  // to gate anything else. A false negative just means the modal is skipped
+  // for what turns out to be non-empty data, so it leans inclusive.
+  function hasEnteredData() {
+    const hasPersonal = !!(
+      form.name?.trim() || form.phone?.trim() || form.email?.trim() ||
+      form.cityChoice || form.cityCustom?.trim() || form.linkedin?.trim() ||
+      form.yearsOfExperience?.trim() || form.summary?.trim()
+    );
+    const hasExperiences = experiences.some((x) => x.title?.trim() || x.employer?.trim() || (x.bullets || []).some((b) => b.trim()));
+    const hasEducation = education.some((x) => x.degreeChoice || x.schoolChoice || x.specializationChoice || x.year?.trim());
+    const hasSkills = techSkillTags.length > 0 || softSkillTags.length > 0;
+    const hasLanguages = languageEntries.some((l) => l.langChoice || l.langCustom?.trim());
+    const hasExtras =
+      achievements.some((a) => a.trim()) ||
+      courses.some((c) => c.name?.trim()) ||
+      certifications.some((c) => c.name?.trim()) ||
+      customSections.some((s) => s.title?.trim() || (s.points || []).some((p) => p.trim()));
+    return hasPersonal || hasExperiences || hasEducation || hasSkills || hasLanguages || hasExtras;
+  }
+
+  // Going back to the upload/blank-form choice screen isn't itself
+  // destructive (sourceChosen=false just re-shows that screen — none of the
+  // form state below is touched by this alone). The only actually
+  // destructive path is picking "upload a CV" again from there, since that
+  // re-runs the existing extraction mapping and can overwrite fields it
+  // maps — so warn up front whenever there's something to lose, rather than
+  // threading a warning into that screen's existing button handlers.
+  function requestChangeMethod() {
+    if (hasEnteredData()) {
+      setShowMethodChangeWarning(true);
+    } else {
+      setSourceChosen(false);
+    }
+  }
+
+  function confirmChangeMethod() {
+    setShowMethodChangeWarning(false);
+    setSourceChosen(false);
   }
 
   // Strips Arabic characters out of a keystroke when the CV output language
@@ -1005,6 +1062,12 @@ export default function AtsCvBuilder({ accessCode }) {
     customSectionTitleEnglishOnly: "The section title must be entered in English only for an English CV (no translation).",
     customSectionPointsLabel: "Points", customSectionPointPh: "e.g. Organized a community fundraising event", addCustomSectionPoint: "Add point",
     addCustomSection: "Add custom section",
+    changeLanguageLabel: "Change CV language",
+    changeMethodLabel: "Change filling method",
+    methodChangeWarningTitle: "Change filling method?",
+    methodChangeWarningBody: "Some data you've already entered may be lost — do you want to continue?",
+    methodChangeWarningConfirm: "Yes, continue",
+    methodChangeWarningCancel: "Cancel",
   } : {
     city: "المدينة", experienceHeading: "الخبرات العملية والتدريب", expCard: "خبرة",
     jobTitle: "المسمى الوظيفي", employer: "جهة العمل", from: "من", to: "إلى", month: "الشهر", year: "السنة",
@@ -1053,6 +1116,12 @@ export default function AtsCvBuilder({ accessCode }) {
     customSectionTitleEnglishOnly: "عنوان القسم يجب إدخاله بالأحرف الإنجليزية فقط للسيرة الإنجليزية (بدون ترجمة).",
     customSectionPointsLabel: "النقاط", customSectionPointPh: "مثال: تنظيم حملة تبرع خيرية في المجتمع المحلي", addCustomSectionPoint: "إضافة نقطة",
     addCustomSection: "إضافة قسم مخصص",
+    changeLanguageLabel: "تغيير لغة السيرة الذاتية",
+    changeMethodLabel: "تغيير طريقة التعبئة",
+    methodChangeWarningTitle: "تغيير طريقة التعبئة؟",
+    methodChangeWarningBody: "سيتم فقدان البيانات المُدخلة — هل تريد المتابعة؟",
+    methodChangeWarningConfirm: "نعم، متابعة",
+    methodChangeWarningCancel: "إلغاء",
   };
 
   // ── Validation (gentle, non-blocking) ──
@@ -1845,9 +1914,53 @@ export default function AtsCvBuilder({ accessCode }) {
       </div>
 
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 20px 60px" }}>
-        <div style={{ textAlign: "center", marginBottom: 18, fontSize: 12.5, color: THEME.text }}>
+        <div style={{ textAlign: "center", marginBottom: 10, fontSize: 12.5, color: THEME.text }}>
           لغة السيرة الذاتية الناتجة: <strong style={{ color: THEME.primary }}>{cvLang === "en" ? "English" : "العربية"}</strong>
         </div>
+
+        {/* Additive back/change navigation — the existing step wizard below
+            is completely untouched by this row. */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
+          <button type="button" onClick={requestChangeLanguage} style={navLinkBtnStyle}>
+            🌐 {L.changeLanguageLabel}
+          </button>
+          <button type="button" onClick={requestChangeMethod} style={navLinkBtnStyle}>
+            🔄 {L.changeMethodLabel}
+          </button>
+        </div>
+
+        {showMethodChangeWarning && (
+          <div
+            role="presentation"
+            onClick={() => setShowMethodChangeWarning(false)}
+            style={{ position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 100 }}
+          >
+            <div
+              dir={cvDir}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="method-change-warning-title"
+              aria-describedby="method-change-warning-desc"
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: "100%", maxWidth: 400, background: THEME.card, borderRadius: 14, padding: 24, boxShadow: "0 12px 40px rgba(18,41,63,.4)" }}
+            >
+              <div id="method-change-warning-title" style={{ fontSize: 16.5, fontWeight: 800, color: THEME.primary, marginBottom: 10 }}>
+                {L.methodChangeWarningTitle}
+              </div>
+              <div id="method-change-warning-desc" style={{ fontSize: 13.5, color: THEME.text, lineHeight: 1.9, marginBottom: 20 }}>
+                {L.methodChangeWarningBody}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button type="button" onClick={confirmChangeMethod} style={{ ...btnPrimary, width: "100%" }}>
+                  {L.methodChangeWarningConfirm}
+                </button>
+                <button type="button" onClick={() => setShowMethodChangeWarning(false)} style={{ ...btnGhost, width: "100%", justifyContent: "center" }}>
+                  {L.methodChangeWarningCancel}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {cvLang === "en" && (
           <div style={{ ...noteBannerStyle, marginBottom: 18 }}>{t.arabicAllowedNote}</div>
@@ -2301,6 +2414,10 @@ const btnGhostLight = { display: "inline-flex", alignItems: "center", gap: 6, ba
 const btnBrass = { display: "inline-flex", alignItems: "center", gap: 7, background: "#000000", color: "#ffffff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 const btnAdd = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#1a3a5c", border: "1.5px dashed #2d5578", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%", justifyContent: "center" };
 const btnIcon = { background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex" };
+// Small text-link style for the form's back/change-language/change-method
+// controls — deliberately understated so it doesn't compete with the main
+// step wizard below it.
+const navLinkBtnStyle = { background: "transparent", border: "none", color: "#2d5578", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", padding: "4px 8px", textDecoration: "underline", textUnderlineOffset: 3 };
 
 const printCSS = `
   .spin { animation: spin 1s linear infinite; }
