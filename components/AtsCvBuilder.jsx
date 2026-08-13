@@ -243,6 +243,13 @@ function anyExperiencesOverlap(list) {
 // than asking the model to know the exact internal option values. Tries
 // both language lists so e.g. an Arabic CV's city still maps correctly onto
 // an English-mode form's option list (translation-by-lookup, not by AI).
+// A language's own display name, always shown in its own script regardless
+// of which language the surrounding sentence is in — same convention
+// already used for the "CV output language" label on the form screen.
+function langDisplayName(code) {
+  return code === "en" ? "English" : "العربية";
+}
+
 function matchOption(value, arList, enList, activeList) {
   const v = String(value || "").trim();
   if (!v) return { choice: "", custom: "" };
@@ -370,6 +377,21 @@ export default function AtsCvBuilder({ accessCode }) {
   const [uploadingCv, setUploadingCv] = useState(false);
   const [uploadCvError, setUploadCvError] = useState("");
   const [blockedField, setBlockedField] = useState(null);
+  // Detected/selected-language mismatch popup state — additive, only
+  // engaged when the uploaded CV's dominant language (reported by
+  // /api/extract-cv as detectedLanguage) differs from the CV language the
+  // applicant already chose. Matching-language uploads never touch any of
+  // this and keep using applyExtractedData exactly as before.
+  const [showLangMismatchModal, setShowLangMismatchModal] = useState(false);
+  const [pendingExtractedData, setPendingExtractedData] = useState(null);
+  const [detectedCvLang, setDetectedCvLang] = useState(null);
+  const [translatingCv, setTranslatingCv] = useState(false);
+  // Drives the single review-notice card near "Next" — set once a
+  // mismatch-triggered translation was applied, regardless of whether the
+  // translation call itself ultimately succeeded or fell back to the
+  // original text, so the applicant is always told to double-check names/
+  // terms/entities after an automatic translation.
+  const [translationApplied, setTranslationApplied] = useState(saved?.translationApplied ?? false);
   // Export confirmation flow: the access code is single-use, so exporting
   // must be an explicit, confirmed action. `exportCompleted` only flips to
   // true after a PDF has actually finished downloading successfully — a
@@ -1070,10 +1092,10 @@ export default function AtsCvBuilder({ accessCode }) {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed, sourceChosen,
         form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries,
-        courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems,
+        courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -1261,6 +1283,227 @@ export default function AtsCvBuilder({ accessCode }) {
     }
   }
 
+  // Used only when the uploaded CV's detected language differs from the
+  // already-selected CV language (see the mismatch popup below). Reuses
+  // the exact same bidirectional dropdown matching as applyExtractedData
+  // (matchOption/matchExact already handle either direction with no AI
+  // needed — untouched here), but additionally batch-translates the
+  // fields that have no canonical list to fall back on: job title,
+  // employer, unmatched "Other" custom text, unmatched skill tags, and
+  // course/certification/custom-section-title text. Bullets, achievements,
+  // graduation projects, and custom-section points are deliberately left
+  // alone here — they already get translated (and polished) later,
+  // automatically, by the existing enhance-items/generate-summary
+  // pipeline at preview time, in either direction.
+  //
+  // This is a separate function from applyExtractedData on purpose — the
+  // matching-language upload path (the vast majority of uploads) keeps
+  // using applyExtractedData completely unchanged, so this new path can
+  // never regress it.
+  async function applyExtractedDataWithTranslation(extracted) {
+    const cityMatch = matchOption(extracted.city, AR_CITIES, EN_CITIES, cityOptions);
+
+    // Bidirectional mirror of applyExtractedData's name rule: a name is
+    // never auto-translated/transliterated in either direction — an AI
+    // transliteration risks inventing a spelling on identifying
+    // information, so a name in the wrong script is left blank for the
+    // applicant to type in themselves, exactly like the existing
+    // Arabic-name-in-English-mode rule, now mirrored for an English name
+    // in Arabic mode.
+    const extractedName = String(extracted.name || "").trim();
+    const nameWrongScript = cvLang === "en"
+      ? ARABIC_RE.test(extractedName)
+      : (LATIN_RE.test(extractedName) && !ARABIC_RE.test(extractedName));
+    const resolvedName = nameWrongScript ? "" : extractedName;
+
+    const educationMatches = (Array.isArray(extracted.education) ? extracted.education : []).map((x) => ({
+      degreeMatch: matchOption(x.degree, AR_DEGREES, EN_DEGREES, degreeOptions),
+      majorMatch: matchOption(x.major, AR_MAJORS, EN_MAJORS, majorOptions),
+      uniMatch: matchOption(x.university, AR_UNIVERSITIES, EN_UNIVERSITIES, universityOptions),
+      year: normalizeYear(x.year),
+      detail: String(x.gpa || "").trim(),
+      gradProject: String(x.gradProject || "").trim(),
+    }));
+
+    const languageMatches = (Array.isArray(extracted.languages) ? extracted.languages : []).map((x) => ({
+      langMatch: matchOption(x.name, AR_LANGUAGE_OPTIONS, EN_LANGUAGE_OPTIONS, languageOptions),
+      level: matchExact(x.level, AR_LEVELS, EN_LEVELS, levelOptions),
+    }));
+
+    const experiencesBase = (Array.isArray(extracted.experiences) ? extracted.experiences : []).map((x) => ({
+      title: String(x.title || "").trim(),
+      employer: String(x.employer || "").trim(),
+      fromMonth: normalizeMonth(x.fromMonth),
+      fromYear: normalizeYear(x.fromYear),
+      toMonth: x.current ? "" : normalizeMonth(x.toMonth),
+      toYear: x.current ? "" : normalizeYear(x.toYear),
+      current: !!x.current,
+      bullets: Array.isArray(x.bullets) ? x.bullets.map((b) => String(b).trim()).filter(Boolean) : [],
+    }));
+
+    const targetRolesBase = Array.isArray(extracted.targetRoles) ? dedupeTrim(extracted.targetRoles) : [];
+    const targetRoleMatches = targetRolesBase.map((role) => matchOption(role, AR_ROLES, EN_ROLES, roleOptions));
+
+    const techSkillsBase = Array.isArray(extracted.techSkills) ? dedupeTrim(extracted.techSkills) : [];
+    const techSkillMatches = techSkillsBase.map((tag) => matchOption(tag, AR_TECH_SKILLS, EN_TECH_SKILLS, techSkillSuggestions));
+
+    const softSkillsBase = Array.isArray(extracted.softSkills) ? dedupeTrim(extracted.softSkills) : [];
+    const softSkillMatches = softSkillsBase.map((tag) => matchOption(tag, AR_SOFT_SKILLS, EN_SOFT_SKILLS, softSkillSuggestions));
+
+    const coursesBase = (Array.isArray(extracted.courses) ? extracted.courses : []).map((x) => ({
+      name: String(x.name || "").trim(),
+      hours: String(x.hours || "").trim(),
+      provider: String(x.provider || "").trim(),
+      date: normalizeYear(x.date),
+    }));
+
+    const certificationsBase = (Array.isArray(extracted.certifications) ? extracted.certifications : []).map((x) => ({
+      name: String(x.name || "").trim(),
+      issuingBody: String(x.issuingBody || "").trim(),
+      date: normalizeYear(x.date),
+    }));
+
+    const otherSectionsBase = (Array.isArray(extracted.otherSections) ? extracted.otherSections : []).map((x) => ({
+      title: String(x.title || "").trim(),
+      points: Array.isArray(x.points) ? x.points.map((p) => String(p).trim()).filter(Boolean) : [],
+    }));
+
+    // Collect every free-text value that has no canonical list to match
+    // against (so matchOption above couldn't resolve it deterministically)
+    // into ONE ordered batch, translated in a single call.
+    const batch = [];
+    const push = (v) => { batch.push(v); return batch.length - 1; };
+
+    const expSlots = experiencesBase.map((x) => ({
+      titleIdx: x.title ? push(x.title) : -1,
+      employerIdx: x.employer ? push(x.employer) : -1,
+    }));
+    const targetRoleSlots = targetRoleMatches.map((m) => (m.choice === OTHER && m.custom ? push(m.custom) : -1));
+    const cityCustomIdx = cityMatch.choice === OTHER && cityMatch.custom ? push(cityMatch.custom) : -1;
+    const eduSlots = educationMatches.map((e) => ({
+      degreeIdx: e.degreeMatch.choice === OTHER && e.degreeMatch.custom ? push(e.degreeMatch.custom) : -1,
+      majorIdx: e.majorMatch.choice === OTHER && e.majorMatch.custom ? push(e.majorMatch.custom) : -1,
+      uniIdx: e.uniMatch.choice === OTHER && e.uniMatch.custom ? push(e.uniMatch.custom) : -1,
+    }));
+    const langSlots = languageMatches.map((l) => (l.langMatch.choice === OTHER && l.langMatch.custom ? push(l.langMatch.custom) : -1));
+    const techSlots = techSkillMatches.map((m) => (m.choice === OTHER && m.custom ? push(m.custom) : -1));
+    const softSlots = softSkillMatches.map((m) => (m.choice === OTHER && m.custom ? push(m.custom) : -1));
+    const courseSlots = coursesBase.map((c) => ({
+      nameIdx: c.name ? push(c.name) : -1,
+      providerIdx: c.provider ? push(c.provider) : -1,
+    }));
+    const certSlots = certificationsBase.map((c) => ({
+      nameIdx: c.name ? push(c.name) : -1,
+      issuingBodyIdx: c.issuingBody ? push(c.issuingBody) : -1,
+    }));
+    const otherSectionTitleSlots = otherSectionsBase.map((s) => (s.title ? push(s.title) : -1));
+
+    // Bounded-retry + graceful fallback already lives server-side (see
+    // /api/translate-extraction, mirroring enhance-items). A network-level
+    // failure here (fetch itself throwing, or a non-JSON response) falls
+    // back to the original, untranslated batch values exactly the same
+    // way a same-shape server-side failure would — this function never
+    // throws, and the review-notice card applies either way.
+    let translated = batch;
+    if (batch.length) {
+      try {
+        const res = await fetch("/api/translate-extraction", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lang: cvLang, terms: batch }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && Array.isArray(data.terms) && data.terms.length === batch.length) {
+          translated = data.terms;
+        }
+      } catch {
+        // Fall through with the original batch — see comment above.
+      }
+    }
+
+    const at = (idx, fallback) => (idx >= 0 ? (translated[idx] || fallback) : fallback);
+
+    setForm((f) => ({
+      ...f,
+      name: resolvedName,
+      email: String(extracted.email || "").trim(),
+      phone: normalizePhone(extracted.phone),
+      cityChoice: cityMatch.choice,
+      cityCustom: cityMatch.choice === OTHER ? at(cityCustomIdx, cityMatch.custom) : cityMatch.custom,
+      linkedin: String(extracted.linkedin || "").trim(),
+      yearsOfExperience: String(extracted.yearsOfExperience || "").trim(),
+    }));
+
+    if (targetRolesBase.length) {
+      setTargetRoles(targetRoleMatches.map((m, i) => (m.choice === OTHER ? at(targetRoleSlots[i], m.custom) : m.choice)));
+    }
+
+    if (experiencesBase.length) {
+      setExperiences(experiencesBase.map((x, i) => ({
+        ...x,
+        title: at(expSlots[i].titleIdx, x.title),
+        employer: at(expSlots[i].employerIdx, x.employer),
+      })));
+    }
+
+    if (educationMatches.length) {
+      setEducation(educationMatches.map((e, i) => ({
+        degreeChoice: e.degreeMatch.choice,
+        degreeCustom: e.degreeMatch.choice === OTHER ? at(eduSlots[i].degreeIdx, e.degreeMatch.custom) : e.degreeMatch.custom,
+        specializationChoice: e.majorMatch.choice,
+        specializationCustom: e.majorMatch.choice === OTHER ? at(eduSlots[i].majorIdx, e.majorMatch.custom) : e.majorMatch.custom,
+        schoolChoice: e.uniMatch.choice,
+        schoolCustom: e.uniMatch.choice === OTHER ? at(eduSlots[i].uniIdx, e.uniMatch.custom) : e.uniMatch.custom,
+        year: e.year,
+        detail: e.detail,
+        gradProject: e.gradProject,
+      })));
+    }
+
+    if (techSkillsBase.length) {
+      setTechSkillTags(techSkillMatches.map((m, i) => (m.choice === OTHER ? at(techSlots[i], m.custom) : m.choice)));
+    }
+    if (softSkillsBase.length) {
+      setSoftSkillTags(softSkillMatches.map((m, i) => (m.choice === OTHER ? at(softSlots[i], m.custom) : m.choice)));
+    }
+
+    if (languageMatches.length) {
+      setLanguageEntries(languageMatches.map((l, i) => ({
+        langChoice: l.langMatch.choice,
+        langCustom: l.langMatch.choice === OTHER ? at(langSlots[i], l.langMatch.custom) : l.langMatch.custom,
+        level: l.level,
+      })));
+    }
+
+    if (Array.isArray(extracted.achievements) && extracted.achievements.length) setAchievements(dedupeTrim(extracted.achievements));
+
+    if (coursesBase.length) {
+      setCourses(coursesBase.map((c, i) => ({
+        name: at(courseSlots[i].nameIdx, c.name),
+        hours: c.hours,
+        provider: at(courseSlots[i].providerIdx, c.provider),
+        date: c.date,
+        hasLicense: false,
+        licenseNumber: "",
+      })));
+    }
+
+    if (certificationsBase.length) {
+      setCertifications(certificationsBase.map((c, i) => ({
+        name: at(certSlots[i].nameIdx, c.name),
+        issuingBody: at(certSlots[i].issuingBodyIdx, c.issuingBody),
+        date: c.date,
+      })));
+    }
+
+    if (otherSectionsBase.length) {
+      setCustomSections(otherSectionsBase.map((s, i) => ({
+        title: at(otherSectionTitleSlots[i], s.title),
+        points: s.points,
+      })));
+    }
+  }
+
   async function handleUploadCv() {
     if (!cvFile) return;
     setUploadingCv(true);
@@ -1271,12 +1514,54 @@ export default function AtsCvBuilder({ accessCode }) {
       const res = await fetch("/api/extract-cv", { method: "POST", body });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.data) throw new Error(data.error || "تعذّر استخراج البيانات من الملف.");
-      applyExtractedData(data.data);
-      setSourceChosen(true);
+
+      const detected = data.data.detectedLanguage === "en" || data.data.detectedLanguage === "ar" ? data.data.detectedLanguage : null;
+      if (detected && detected !== cvLang) {
+        setDetectedCvLang(detected);
+        setPendingExtractedData(data.data);
+        setShowLangMismatchModal(true);
+      } else {
+        applyExtractedData(data.data);
+        setSourceChosen(true);
+      }
     } catch (err) {
       setUploadCvError(err.message || "تعذّر استخراج البيانات من الملف. يمكنك المتابعة وتعبئة النموذج يدوياً.");
     } finally {
       setUploadingCv(false);
+    }
+  }
+
+  // "الرجوع للتعديل" / "Go back and edit" — returns to the language
+  // selection screen (unconfirming langConfirmed) so the applicant can
+  // change the selected CV language or re-choose. Discards the pending
+  // extraction so a stale mismatch never lingers if they upload again.
+  function cancelLangMismatch() {
+    setShowLangMismatchModal(false);
+    setPendingExtractedData(null);
+    setDetectedCvLang(null);
+    setCvFile(null);
+    setUploadCvError("");
+    setShowUploadPanel(false);
+    setPriorConfirmedLang(cvLang);
+    setLangConfirmed(false);
+  }
+
+  // "المتابعة" / "Continue" — proceeds with the translation-aware mapping
+  // path instead of the plain applyExtractedData used for matching-language
+  // uploads.
+  async function continueLangMismatch() {
+    const extracted = pendingExtractedData;
+    setShowLangMismatchModal(false);
+    if (!extracted) return;
+    setTranslatingCv(true);
+    try {
+      await applyExtractedDataWithTranslation(extracted);
+      setTranslationApplied(true);
+    } finally {
+      setTranslatingCv(false);
+      setPendingExtractedData(null);
+      setDetectedCvLang(null);
+      setSourceChosen(true);
     }
   }
 
@@ -1336,6 +1621,12 @@ export default function AtsCvBuilder({ accessCode }) {
     methodChangeWarningCancel: "Cancel",
     arabicBlockedNotice: "This field must be entered in English only for the English CV (no translation).",
     englishBlockedNotice: "This field must be entered in Arabic only for the Arabic CV (no translation).",
+    langMismatchTitle: "Language mismatch",
+    langMismatchBody: (selectedLabel, uploadedLabel) => `You chose ${selectedLabel} but uploaded a CV written in ${uploadedLabel}. We'll do our best to translate it, but please review the result carefully — especially names and technical terms.`,
+    langMismatchBack: "Go back and edit",
+    langMismatchContinue: "Continue",
+    translatingCv: "Translating your CV...",
+    translationReviewNotice: "We automatically translated your CV — please carefully review names, terms, and organizations, and make sure they're correct before continuing.",
   } : {
     city: "المدينة", experienceHeading: "الخبرات العملية والتدريب", expCard: "خبرة",
     jobTitle: "المسمى الوظيفي", employer: "جهة العمل", from: "من", to: "إلى", month: "الشهر", year: "السنة",
@@ -1392,6 +1683,12 @@ export default function AtsCvBuilder({ accessCode }) {
     methodChangeWarningCancel: "إلغاء",
     arabicBlockedNotice: "يجب إدخال هذا الحقل بالأحرف الإنجليزية فقط للسيرة الإنجليزية (بدون ترجمة).",
     englishBlockedNotice: "يجب إدخال هذا الحقل بالأحرف العربية فقط للسيرة العربية (بدون ترجمة).",
+    langMismatchTitle: "اختلاف في اللغة",
+    langMismatchBody: (selectedLabel, uploadedLabel) => `لقد اخترت اللغة ${selectedLabel} ورفعت سيرة باللغة ${uploadedLabel}. سنبذل قصارى جهدنا في الترجمة، لكن يُرجى مراجعة النتيجة بعناية — خاصة الأسماء والمصطلحات التقنية.`,
+    langMismatchBack: "الرجوع للتعديل",
+    langMismatchContinue: "المتابعة",
+    translatingCv: "جارٍ ترجمة سيرتك الذاتية...",
+    translationReviewNotice: "قمنا بترجمة سيرتك تلقائيًا — يُرجى مراجعة الأسماء والمصطلحات والجهات بعناية والتأكد من صحتها قبل المتابعة.",
   };
 
   // ── Validation (gentle, non-blocking) ──
@@ -1905,10 +2202,14 @@ export default function AtsCvBuilder({ accessCode }) {
               <div style={{ ...hintStyle, marginBottom: 16 }}>الصيغ المدعومة: PDF أو Word (.docx)، بحد أقصى 4 ميجابايت. البيانات المستخرجة هي مسودة أولية — راجعها وصحّحها قبل التصدير.</div>
               <button
                 onClick={handleUploadCv}
-                disabled={uploadingCv || !cvFile}
-                style={{ ...btnPrimary, width: "100%", opacity: uploadingCv || !cvFile ? 0.7 : 1 }}
+                disabled={uploadingCv || translatingCv || !cvFile}
+                style={{ ...btnPrimary, width: "100%", opacity: uploadingCv || translatingCv || !cvFile ? 0.7 : 1 }}
               >
-                {uploadingCv ? <><Loader2 size={16} className="spin" /> جارٍ استخراج البيانات...</> : "رفع ومتابعة"}
+                {uploadingCv
+                  ? <><Loader2 size={16} className="spin" /> جارٍ استخراج البيانات...</>
+                  : translatingCv
+                  ? <><Loader2 size={16} className="spin" /> {L.translatingCv}</>
+                  : "رفع ومتابعة"}
               </button>
               {uploadCvError && (
                 <div style={{ marginTop: 12 }}>
@@ -1920,14 +2221,46 @@ export default function AtsCvBuilder({ accessCode }) {
               )}
               <button
                 onClick={() => { setShowUploadPanel(false); setCvFile(null); setUploadCvError(""); }}
-                disabled={uploadingCv}
-                style={{ ...btnGhost, width: "100%", justifyContent: "center", marginTop: 10, opacity: uploadingCv ? 0.5 : 1 }}
+                disabled={uploadingCv || translatingCv}
+                style={{ ...btnGhost, width: "100%", justifyContent: "center", marginTop: 10, opacity: uploadingCv || translatingCv ? 0.5 : 1 }}
               >
                 رجوع
               </button>
             </div>
           )}
         </div>
+
+        {showLangMismatchModal && (
+          <div
+            role="presentation"
+            style={{ position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 100 }}
+          >
+            <div
+              dir={cvDir}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="lang-mismatch-title"
+              aria-describedby="lang-mismatch-desc"
+              style={{ width: "100%", maxWidth: 400, background: THEME.card, borderRadius: 14, padding: 24, boxShadow: "0 12px 40px rgba(18,41,63,.4)" }}
+            >
+              <div id="lang-mismatch-title" style={{ fontSize: 16.5, fontWeight: 800, color: THEME.primary, marginBottom: 10 }}>
+                {L.langMismatchTitle}
+              </div>
+              <div id="lang-mismatch-desc" style={{ fontSize: 13.5, color: THEME.text, lineHeight: 1.9, marginBottom: 20 }}>
+                {L.langMismatchBody(langDisplayName(cvLang), langDisplayName(detectedCvLang))}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button type="button" onClick={continueLangMismatch} style={{ ...btnPrimary, width: "100%" }}>
+                  {L.langMismatchContinue}
+                </button>
+                <button type="button" onClick={cancelLangMismatch} style={{ ...btnGhost, width: "100%", justifyContent: "center" }}>
+                  {L.langMismatchBack}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <style>{`.spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
@@ -2552,6 +2885,24 @@ export default function AtsCvBuilder({ accessCode }) {
                 <button onClick={addCustomSection} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addCustomSection}</button>
               </div>
             </>
+          )}
+
+          {/* Single review notice — shown once a mismatch-triggered
+              translation was applied to this CV, on every step, right
+              above Next so it's seen before moving on. Not per-field. */}
+          {translationApplied && (
+            <div
+              role="note"
+              style={{
+                marginTop: 24, padding: "12px 16px", borderRadius: 10,
+                background: "#fff8e6", border: "1px solid #e8c874",
+                color: "#6b4e00", fontSize: 12.5, lineHeight: 1.8,
+                display: "flex", alignItems: "flex-start", gap: 8,
+              }}
+            >
+              <span style={{ flexShrink: 0 }}>⚠️</span>
+              <span>{L.translationReviewNotice}</span>
+            </div>
           )}
 
           {/* Nav */}

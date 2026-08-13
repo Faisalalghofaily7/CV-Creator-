@@ -35,6 +35,7 @@ const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const SYSTEM_PROMPT = `You are a CV data-extraction assistant. Read the applicant's CV (attached) and extract its content into STRICT JSON matching exactly this shape. Return ONLY the JSON object — no prose, no markdown code fences, no explanation before or after it.
 
 {
+  "detectedLanguage": "ar" | "en",
   "name": string, "email": string, "phone": string, "city": string, "linkedin": string, "yearsOfExperience": string,
   "targetRoles": string[],
   "experiences": [{ "title": string, "employer": string, "fromMonth": number|null, "fromYear": string, "toMonth": number|null, "toYear": string, "current": boolean, "bullets": string[] }],
@@ -51,6 +52,7 @@ const SYSTEM_PROMPT = `You are a CV data-extraction assistant. Read the applican
 Rules:
 - Extract ONLY what is actually written in the CV. NEVER invent, guess, or embellish any fact, number, date, employer, or achievement not present in the source document.
 - If a field isn't present in the CV, use an empty string "" (or an empty array, or null for month numbers) — never fabricate a plausible-sounding value to fill a gap.
+- "detectedLanguage": the CV's own dominant language — "ar" if it's written mainly in Arabic, "en" if mainly in English. Judge this from the bulk of the document's prose (summary, bullet points, section text), not from isolated proper nouns, tool names, or a bilingual header/contact line.
 - fromMonth/toMonth must be a plain integer 1-12 (1 = January) if a month is stated in that entry's date range, otherwise null. Never a month name or any other format.
 - "current" is true only if the CV explicitly indicates the applicant still works there (e.g. "Present", "current", "حتى الآن", "لا يزال يعمل").
 - targetRoles: if the CV doesn't state a target/desired role explicitly, you may infer ONE likely target role from the applicant's most recent/prominent job title — never invent a role unrelated to their actual experience. If genuinely unclear, return an empty array.
