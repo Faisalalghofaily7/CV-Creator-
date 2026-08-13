@@ -61,6 +61,18 @@ function countWords(text) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+// A professional summary must render as one flowing paragraph. The PDF
+// template (paragraphHtml in cvHtmlTemplate.js) preserves any "\n" in the
+// text as a forced hard line break — but countWords() above treats "\n" as
+// ordinary whitespace, so a draft with an embedded blank line (e.g. if the
+// model splits it into two "paragraphs") can pass the word cap below while
+// still rendering with MORE visual lines than the cap intends. Collapsing
+// every run of whitespace/newlines to a single space before counting or
+// capping closes that gap.
+function normalizeSummaryText(text) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 // Deterministic last resort: walks whole sentences in order, keeping each
 // one only if the running total still fits under the cap — so the result
 // always ends on real sentence-final punctuation, never mid-sentence. The
@@ -83,12 +95,15 @@ function trimToWordCap(text, maxWords) {
 // enforce on longer/senior profiles: first tries one AI compression pass
 // (keeps the writing natural), then falls back to trimToWordCap if that
 // still isn't short enough. Never throws — any failure here just falls
-// back to the best text already in hand.
+// back to the best text already in hand. Always returns { summary,
+// triggered, path } — the caller logs this unconditionally (see POST
+// below) so production logs can confirm the cap is actually executing on
+// every generation, not just the ones that happen to exceed it.
 async function enforceSummaryCap(client, lang, summary) {
   const wordCount = countWords(summary);
-  if (wordCount <= SUMMARY_MAX_WORDS) return summary;
-
-  console.warn(`[SUMMARY-CAP] AI summary exceeded the cap: ${wordCount} words (max ${SUMMARY_MAX_WORDS}) — attempting a compression pass.`);
+  if (wordCount <= SUMMARY_MAX_WORDS) {
+    return { summary, triggered: false, path: "none" };
+  }
 
   try {
     const compressed = await client.messages.create({
@@ -97,18 +112,16 @@ async function enforceSummaryCap(client, lang, summary) {
       system: buildCompressionPrompt(lang),
       messages: [{ role: "user", content: summary }],
     });
-    const compressedText = compressed.content?.find((block) => block.type === "text")?.text?.trim();
+    const compressedText = normalizeSummaryText(compressed.content?.find((block) => block.type === "text")?.text?.trim() || "");
     if (compressedText) {
       const compressedWordCount = countWords(compressedText);
       if (compressedWordCount <= SUMMARY_MAX_WORDS) {
-        console.warn(`[SUMMARY-CAP] resolved via compression pass: ${compressedWordCount} words.`);
-        return compressedText;
+        return { summary: compressedText, triggered: true, path: "ai-compression" };
       }
       // Still over, but likely closer — trim this version below rather
       // than the longer original.
       const trimmed = trimToWordCap(compressedText, SUMMARY_MAX_WORDS);
-      console.warn(`[SUMMARY-CAP] compression pass still over the cap (${compressedWordCount} words) — resolved via deterministic trim: ${countWords(trimmed)} words.`);
-      return trimmed;
+      return { summary: trimmed, triggered: true, path: "compression-then-trim" };
     }
   } catch (err) {
     console.error("[SUMMARY-CAP] compression pass failed, falling back to a deterministic trim of the original:", err?.message || err);
@@ -117,8 +130,7 @@ async function enforceSummaryCap(client, lang, summary) {
   // No compressed text to work with (compression pass failed or returned
   // nothing) — fall back to trimming the original draft.
   const trimmed = trimToWordCap(summary, SUMMARY_MAX_WORDS);
-  console.warn(`[SUMMARY-CAP] resolved via deterministic trim: ${countWords(trimmed)} words (from ${wordCount}, original draft).`);
-  return trimmed;
+  return { summary: trimmed, triggered: true, path: "trim-only" };
 }
 
 // Renders the applicant's data as a plain labeled block for the model —
@@ -186,16 +198,34 @@ export async function POST(request) {
     const rawSummary = message.content?.find((block) => block.type === "text")?.text?.trim();
     if (!rawSummary) throw new Error("Empty response from Claude");
 
+    // Normalize before counting/capping/returning — see normalizeSummaryText
+    // above for why embedded newlines must be collapsed before the word
+    // count is meaningful.
+    const normalizedRaw = normalizeSummaryText(rawSummary);
+    const beforeWordCount = countWords(normalizedRaw);
+
     // enforceSummaryCap already catches its own failures internally, but
     // if it were ever to throw anyway, the best available text is still
     // the uncapped draft — better to return that over the cap than lose a
     // perfectly good summary to an unrelated hiccup in the cap logic.
-    let summary = rawSummary;
+    let summary = normalizedRaw;
+    let triggered = false;
+    let path = "none";
     try {
-      summary = await enforceSummaryCap(client, lang, rawSummary);
+      const capResult = await enforceSummaryCap(client, lang, normalizedRaw);
+      summary = capResult.summary;
+      triggered = capResult.triggered;
+      path = capResult.path;
     } catch (capErr) {
+      path = "cap-error";
       console.error("[SUMMARY-CAP] unexpected failure, returning the uncapped draft:", capErr?.message || capErr);
     }
+
+    // Unconditional — fires on every single generation, whether or not the
+    // cap actually triggered, specifically so this line's presence (or
+    // absence) in production logs can confirm the cap code is running at
+    // all, not just when it happens to kick in.
+    console.log(`[SUMMARY-CAP] lang=${lang} before=${beforeWordCount}w cap=${SUMMARY_MAX_WORDS}w triggered=${triggered} path=${path} after=${countWords(summary)}w`);
 
     return NextResponse.json({ summary });
   } catch (err) {
