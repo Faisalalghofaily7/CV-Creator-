@@ -6,8 +6,13 @@ export const runtime = "nodejs";
 
 // Hard ceiling enforced both in the prompt and, deterministically, in code
 // below (a prompt instruction alone doesn't reliably hold on longer/senior
-// profiles) — see enforceSummaryCap.
-const MAX_SUMMARY_LINES = 5;
+// profiles) — see enforceSummaryCap. Word count, not sentence count: a
+// handful of long sentences can still render to far more than 5 lines in
+// the PDF (a real 5-sentence summary rendered ~10 lines), so sentence
+// count was a poor proxy. Exact rendered lines still depend on the PDF's
+// font/page width, which this route has no visibility into — word count
+// is just a steadier stand-in. TUNE THIS NUMBER after checking real PDFs.
+const SUMMARY_MAX_WORDS = 75;
 
 function buildSystemPrompt(lang) {
   const languageName = lang === "en" ? "English" : "Arabic";
@@ -16,7 +21,7 @@ function buildSystemPrompt(lang) {
 Instructions:
 1. Write a summary oriented toward the target role, making the best possible use of the applicant's real experience and capabilities, blended with what that role actually calls for.
 2. Judge the right length and depth yourself, holistically, from the applicant's whole profile — their actual experience, seniority, achievements, role, and skills. Do NOT use a mechanical rule like "X years = Y lines." A more accomplished, senior profile can naturally warrant a fuller summary; a lighter or junior profile warrants a shorter, focused one — but let the substance of what they've actually done drive that, not a formula.
-3. HARD LIMIT, NON-NEGOTIABLE: the summary must be AT MOST ${MAX_SUMMARY_LINES} sentences/lines, no matter how senior or accomplished the applicant is. Before you finish, COUNT the sentences in your draft. If it is more than ${MAX_SUMMARY_LINES}, you MUST cut it down — combine sentences or remove the least essential ones — until it is ${MAX_SUMMARY_LINES} or fewer. Never submit a draft you haven't counted. A senior profile that seems to need more room must still be compressed to fit; density, not length, is how you show seniority.
+3. HARD LIMIT, NON-NEGOTIABLE: the summary must be AT MOST ${SUMMARY_MAX_WORDS} words total (that's what keeps it to roughly 5 lines in the final document), no matter how senior or accomplished the applicant is. Before you finish, COUNT the words in your draft. If it is more than ${SUMMARY_MAX_WORDS} words, you MUST cut it down — combine sentences or remove the least essential ones — until it is at or under ${SUMMARY_MAX_WORDS} words. Never submit a draft you haven't counted. A senior profile that seems to need more room must still be compressed to fit; density, not length, is how you show seniority.
 4. HONESTY is critical: base the summary strictly on the real inputs. Never over-qualify or inflate a profile — a junior applicant must never be made to sound senior. Never pad the summary to fill space or reach a target length; if the applicant's real substance is modest, keep the summary appropriately concise rather than stretching it with generic filler.
 5. Use strong professional language and action verbs (led, developed, managed, achieved) where the facts genuinely support them.
 6. You MAY add general professional phrasing to enrich the writing, but:
@@ -34,18 +39,16 @@ function buildCompressionPrompt(lang) {
   const languageName = lang === "en" ? "English" : "Arabic";
   return `You are compressing a professional CV summary that came out too long, in ${languageName}.
 
-Rewrite it so it is AT MOST ${MAX_SUMMARY_LINES} sentences/lines total. Rules:
+Rewrite it so it is AT MOST ${SUMMARY_MAX_WORDS} words total (roughly 5 lines). Rules:
 - Do not invent, add, or exaggerate any fact — only compress what's already there.
+- Keep the most important, role-focused, honest content — the applicant's real seniority, core skills, and strongest concrete achievements. Drop the least essential phrasing first; never over-qualify or add anything not already present to fill space.
 - You may drop less-essential phrasing or combine sentences, but never lose a concrete fact (a role, a real number, a real skill) unless you truly have no room.
 - Keep the same professional third-person tone and role focus.
-- Count your sentences before responding — if it's still more than ${MAX_SUMMARY_LINES}, cut further.
+- Count your words before responding — if it's still more than ${SUMMARY_MAX_WORDS}, cut further.
 
 Return ONLY the compressed summary text, with no preamble or explanation.`;
 }
 
-// A renderer-independent stand-in for "line" — the summary is one flowing
-// paragraph (no literal newlines), so sentence count is what's actually
-// enforceable here; each sentence reads as roughly one line in the PDF.
 const SENTENCE_SPLIT_RE = /(?<=[.!?؟])\s+/;
 function splitSentences(text) {
   return text
@@ -54,16 +57,38 @@ function splitSentences(text) {
     .filter(Boolean);
 }
 
-// Deterministically holds the line cap the prompt alone doesn't reliably
-// enforce on longer/senior profiles: first tries one AI compression pass
-// (keeps the writing natural), then falls back to a clean, whole-sentence
-// trim if that still isn't short enough. Never throws — any failure here
-// just falls back to the best text already in hand.
-async function enforceSummaryCap(client, lang, summary) {
-  const sentences = splitSentences(summary);
-  if (sentences.length <= MAX_SUMMARY_LINES) return summary;
+function countWords(text) {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
 
-  console.warn(`[SUMMARY-CAP] AI summary exceeded the cap: ${sentences.length} sentences (max ${MAX_SUMMARY_LINES}) — attempting a compression pass.`);
+// Deterministic last resort: walks whole sentences in order, keeping each
+// one only if the running total still fits under the cap — so the result
+// always ends on real sentence-final punctuation, never mid-sentence. The
+// very first sentence is always kept even if it alone exceeds the cap
+// (better to end slightly over than return nothing).
+function trimToWordCap(text, maxWords) {
+  const sentences = splitSentences(text);
+  const included = [];
+  let wordCount = 0;
+  for (const sentence of sentences) {
+    const sentenceWords = countWords(sentence);
+    if (included.length && wordCount + sentenceWords > maxWords) break;
+    included.push(sentence);
+    wordCount += sentenceWords;
+  }
+  return included.join(" ") || text;
+}
+
+// Deterministically holds the word cap the prompt alone doesn't reliably
+// enforce on longer/senior profiles: first tries one AI compression pass
+// (keeps the writing natural), then falls back to trimToWordCap if that
+// still isn't short enough. Never throws — any failure here just falls
+// back to the best text already in hand.
+async function enforceSummaryCap(client, lang, summary) {
+  const wordCount = countWords(summary);
+  if (wordCount <= SUMMARY_MAX_WORDS) return summary;
+
+  console.warn(`[SUMMARY-CAP] AI summary exceeded the cap: ${wordCount} words (max ${SUMMARY_MAX_WORDS}) — attempting a compression pass.`);
 
   try {
     const compressed = await client.messages.create({
@@ -74,15 +99,15 @@ async function enforceSummaryCap(client, lang, summary) {
     });
     const compressedText = compressed.content?.find((block) => block.type === "text")?.text?.trim();
     if (compressedText) {
-      const compressedSentences = splitSentences(compressedText);
-      if (compressedSentences.length <= MAX_SUMMARY_LINES) {
-        console.warn(`[SUMMARY-CAP] compression pass succeeded: ${compressedSentences.length} sentences.`);
+      const compressedWordCount = countWords(compressedText);
+      if (compressedWordCount <= SUMMARY_MAX_WORDS) {
+        console.warn(`[SUMMARY-CAP] resolved via compression pass: ${compressedWordCount} words.`);
         return compressedText;
       }
       // Still over, but likely closer — trim this version below rather
       // than the longer original.
-      console.warn(`[SUMMARY-CAP] compression pass still over the cap (${compressedSentences.length} sentences) — trimming deterministically.`);
-      const trimmed = compressedSentences.slice(0, MAX_SUMMARY_LINES).join(" ");
+      const trimmed = trimToWordCap(compressedText, SUMMARY_MAX_WORDS);
+      console.warn(`[SUMMARY-CAP] compression pass still over the cap (${compressedWordCount} words) — resolved via deterministic trim: ${countWords(trimmed)} words.`);
       return trimmed;
     }
   } catch (err) {
@@ -90,10 +115,9 @@ async function enforceSummaryCap(client, lang, summary) {
   }
 
   // No compressed text to work with (compression pass failed or returned
-  // nothing) — fall back to trimming the original draft. Whole sentences
-  // only, never cut mid-sentence.
-  const trimmed = sentences.slice(0, MAX_SUMMARY_LINES).join(" ");
-  console.warn(`[SUMMARY-CAP] trimmed deterministically to ${MAX_SUMMARY_LINES} sentences (from ${sentences.length}).`);
+  // nothing) — fall back to trimming the original draft.
+  const trimmed = trimToWordCap(summary, SUMMARY_MAX_WORDS);
+  console.warn(`[SUMMARY-CAP] resolved via deterministic trim: ${countWords(trimmed)} words (from ${wordCount}, original draft).`);
   return trimmed;
 }
 
