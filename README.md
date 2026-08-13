@@ -226,7 +226,8 @@ STAFF_PASSWORD_HASH=$2b$12$........................................
 | - | - | - |
 | `RESEND_API_KEY` | مفتاح Resend API الخاص بك | Production, Preview, Development |
 | `STAFF_NOTIFICATION_EMAIL` (اختياري، احتياطي) | يُستخدم فقط إن لم يوجد أي موظف نشط من النوع المطلوب ببريد مضبوط | Production, Preview, Development |
-| `NOTIFICATION_FROM_EMAIL` (اختياري) | عنوان المرسل — الافتراضي `onboarding@resend.dev` (مرسل Resend التجريبي)، غيّره فور ربط نطاق مخصَّص بحساب Resend | Production, Preview, Development |
+| `RESEND_FROM_EMAIL` (اختياري) | عنوان المرسل — الافتراضي `notifications@notification.cv-creators.com` (النطاق الموثَّق في Resend) | Production, Preview, Development |
+| `RESEND_FROM_NAME` (اختياري) | الاسم الظاهر للمرسل — الافتراضي `منصة السيرة الذاتية` | Production, Preview, Development |
 
 ### تكامل Webhooks من سلة
 
