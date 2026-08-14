@@ -2843,12 +2843,6 @@ export default function AtsCvBuilder({ accessCode }) {
               </Section>
             )}
 
-            {languagesStr && (
-              <Section title={t.languages}>
-                <p style={pBody}>{languagesStr}</p>
-              </Section>
-            )}
-
             {achievements.some((a) => a.trim()) && (
               <Section title={t.achievements}>
                 <ul style={ulBody(cvDir)}>
@@ -2897,6 +2891,14 @@ export default function AtsCvBuilder({ accessCode }) {
                 )}
               </Section>
             ))}
+
+            {/* Always absolute last, after any custom sections — see the
+                matching order in cvHtmlTemplate.js's buildCvHtml. */}
+            {languagesStr && (
+              <Section title={t.languages}>
+                <p style={pBody}>{languagesStr}</p>
+              </Section>
+            )}
           </div>
         </div>
 
