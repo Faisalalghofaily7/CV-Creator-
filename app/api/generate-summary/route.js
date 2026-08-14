@@ -120,11 +120,26 @@ async function enforceSummaryCap(client, lang, summary) {
   try {
     const compressed = await client.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 400,
+      max_tokens: 600,
       system: buildCompressionPrompt(lang),
       messages: [{ role: "user", content: summary }],
     });
-    const compressedText = normalizeSummaryText(compressed.content?.find((block) => block.type === "text")?.text?.trim() || "");
+    // A response cut off by the token budget (stop_reason "max_tokens")
+    // ends wherever generation happened to be — frequently mid-word, mid-
+    // sentence — never on real punctuation. Word count alone can't catch
+    // this: a truncated draft usually has FEWER words, so it can slip
+    // right under SUMMARY_MAX_WORDS and get accepted as-is below. Treating
+    // a truncated response as unusable (instead of "compressedText") and
+    // falling through to the deterministic trim of the original, uncut
+    // draft is what guarantees the returned text always ends on a full
+    // sentence.
+    const compressedText =
+      compressed.stop_reason === "max_tokens"
+        ? ""
+        : normalizeSummaryText(compressed.content?.find((block) => block.type === "text")?.text?.trim() || "");
+    if (compressed.stop_reason === "max_tokens") {
+      console.warn("[SUMMARY-CAP] compression pass was truncated by max_tokens — discarding it, falling back to a deterministic trim of the original.");
+    }
     if (compressedText) {
       const compressedWordCount = countWords(compressedText);
       if (compressedWordCount <= SUMMARY_MAX_WORDS) {
@@ -139,8 +154,10 @@ async function enforceSummaryCap(client, lang, summary) {
     console.error("[SUMMARY-CAP] compression pass failed, falling back to a deterministic trim of the original:", err?.message || err);
   }
 
-  // No compressed text to work with (compression pass failed or returned
-  // nothing) — fall back to trimming the original draft.
+  // No compressed text to work with (compression pass failed, was
+  // truncated, or returned nothing) — fall back to trimming the original
+  // draft. trimToWordCap always ends on real sentence-final punctuation,
+  // so this is never itself a source of mid-word truncation.
   const trimmed = trimToWordCap(summary, SUMMARY_MAX_WORDS);
   return { summary: trimmed, triggered: true, path: "trim-only" };
 }
@@ -205,7 +222,16 @@ export async function POST(request) {
         const message = await client.messages.create(
           {
             model: CLAUDE_MODEL,
-            max_tokens: 500,
+            // Generous on purpose: this is headroom for the model's RAW,
+            // uncapped draft, not the actual target length — the word cap
+            // below is what controls final length. A richer profile (e.g.
+            // longer experience bullets, once those bullets have already
+            // been AI-enhanced into fuller, more polished lines by a
+            // previous preview) makes the model write a longer draft
+            // before it self-limits, and a tight budget here can cut that
+            // draft off mid-word before enforceSummaryCap ever runs —
+            // exactly the truncation this bug report described.
+            max_tokens: 900,
             system: buildSystemPrompt(lang),
             messages: [
               {
@@ -218,6 +244,13 @@ export async function POST(request) {
         );
         const text = message.content?.find((block) => block.type === "text")?.text?.trim();
         if (!text) throw new Error("Empty response from Claude");
+        // A response cut off by max_tokens ends wherever generation
+        // happened to be, not on a sentence boundary — treating it as a
+        // failed attempt (so retryWithBackoff tries again) is what keeps a
+        // mid-word fragment from ever reaching enforceSummaryCap, which has
+        // no way to tell "this genuinely fits in N words" apart from "this
+        // was cut off before finishing."
+        if (message.stop_reason === "max_tokens") throw new Error("Response truncated by max_tokens");
         return text;
       },
       { logTag: "[SUMMARY-RETRY]" }
