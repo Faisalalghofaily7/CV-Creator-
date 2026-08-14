@@ -268,6 +268,15 @@ const TRANSLATION_REVIEW_NOTICE_BILINGUAL = {
   ar: "قمنا بترجمة سيرتك تلقائيًا — يُرجى مراجعة الأسماء والمصطلحات والجهات بعناية والتأكد من صحتها قبل المتابعة.",
 };
 
+// Shown once, right after a successful export — always in BOTH languages
+// together (same convention as the mismatch popup/review notice above),
+// since it's the very last thing the applicant sees regardless of which
+// CV language they picked.
+const THANK_YOU_MESSAGE_BILINGUAL = {
+  ar: "شكرًا لاستخدامك خدمتنا. سنعمل الآن على إرسال سيرتك الذاتية إلى الشركات، وسنشاركك التقرير عبر واتساب خلال 72 ساعة. يعتمد عدد الشركات على المدن والوظائف المستهدفة التي حددتها.",
+  en: "Thank you for using our service. We'll now work on sending your CV to companies, and we'll share the report with you via WhatsApp within 72 hours. The number of companies depends on the target cities and jobs you selected.",
+};
+
 // Appends the "years experience" / "سنوات خبرة" label to a years-of-
 // experience value, UNLESS the value already ends with that exact label —
 // a safety net against a translated/extracted value that (against the
@@ -281,6 +290,57 @@ function formatYearsLine(value, label) {
   const trimmedLabel = String(label || "").trim();
   if (trimmedLabel && v.toLowerCase().endsWith(trimmedLabel.toLowerCase())) return v;
   return trimmedLabel ? `${v} ${trimmedLabel}` : v;
+}
+
+// Keeps a GPA input to digits and at most one decimal point — no letters,
+// no second "." (a stray extra one is just dropped rather than rejecting
+// the whole keystroke, so typing "4..5" quietly becomes "4.5").
+function normalizeGpaInput(raw) {
+  const digitsAndDot = normalizeDigits(raw).replace(/[^\d.]/g, "");
+  const firstDot = digitsAndDot.indexOf(".");
+  if (firstDot === -1) return digitsAndDot;
+  return digitsAndDot.slice(0, firstDot + 1) + digitsAndDot.slice(firstDot + 1).replace(/\./g, "");
+}
+
+// True only once BOTH a value and a scale are present and the value
+// numerically exceeds it — an empty value or an unselected scale is not
+// an error on its own (GPA stays optional), just not yet renderable (see
+// formatGpaValue).
+function gpaExceedsScale(value, scale) {
+  if (!value || !scale) return false;
+  const num = parseFloat(value);
+  const max = parseFloat(scale);
+  return !isNaN(num) && !isNaN(max) && num > max;
+}
+
+// "4.5 / 5" (English) or "4.5 من 5" (Arabic) — exactly the two output
+// formats requested. Renders nothing until both a value and a scale are
+// set (GPA is optional; an incomplete pair just doesn't show up on the
+// CV rather than rendering a half-formed line).
+function formatGpaValue(value, scale, lang) {
+  if (!value || !scale || gpaExceedsScale(value, scale)) return "";
+  return lang === "en" ? `${value} / ${scale}` : `${value} من ${scale}`;
+}
+
+// Best-effort parse of a free-text GPA string extracted from an uploaded
+// CV (e.g. "4.5/5", "4.5 من 5", "3.8 out of 4") into the new
+// {gpaValue, gpaScale} shape. Only recognizes a 4 or 5 scale, matching
+// the two options the form itself offers — anything else (an unusual
+// scale, or just a bare number with no stated scale) leaves gpaScale
+// blank rather than guessing, so the applicant picks it themselves; a
+// value with no confidently-parsed scale is still kept so they don't
+// have to retype the number, just choose the scale.
+function parseGpaScale(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return { gpaValue: "", gpaScale: "" };
+  const scaled = s.match(/(\d+(?:\.\d+)?)\s*(?:\/|من|out of|of)\s*(\d+(?:\.\d+)?)/i);
+  if (scaled) {
+    const scale = scaled[2];
+    if (scale === "4" || scale === "5") return { gpaValue: scaled[1], gpaScale: scale };
+  }
+  const bare = s.match(/^(\d+(?:\.\d+)?)$/);
+  if (bare) return { gpaValue: bare[1], gpaScale: "" };
+  return { gpaValue: "", gpaScale: "" };
 }
 
 function matchOption(value, arList, enList, activeList) {
@@ -439,6 +499,15 @@ export default function AtsCvBuilder({ accessCode }) {
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [aiSummaryError, setAiSummaryError] = useState("");
   const [aiSummaryGenerated, setAiSummaryGenerated] = useState(saved?.aiSummaryGenerated ?? false);
+  // Snapshot of the exact input the summary was last generated FROM (see
+  // buildSummaryInputSnapshot/generateAiSummary) — compared against the
+  // CURRENT input every time Preview is opened so that going back and
+  // editing anything the summary depends on (target role, years of
+  // experience, an experience/education entry, skills) re-runs the AI,
+  // while leaving unrelated fields untouched never triggers a needless
+  // re-call. aiSummaryGenerated alone only tracked "has this run at
+  // least once," not "is it still current."
+  const [summaryInputSnapshot, setSummaryInputSnapshot] = useState(saved?.summaryInputSnapshot ?? null);
   // Blocking overlay shown on the preview screen for as long as the
   // summary/enhancement generation triggered by "معاينة السيرة الذاتية" is
   // still in flight — covers both the slow-retry case and the fast/normal
@@ -469,6 +538,13 @@ export default function AtsCvBuilder({ accessCode }) {
   const [showSectionWarningModal, setShowSectionWarningModal] = useState(false);
   const [sectionWarningLabel, setSectionWarningLabel] = useState("");
   const [pendingStepAdvance, setPendingStepAdvance] = useState(null);
+  // BLOCKING (unlike the section-warning nudge above): every mandatory
+  // field, checked across ALL steps regardless of which one the applicant
+  // is currently on — closes the bypass where jumping straight to another
+  // section via the step menu skips whatever canProceed() would have
+  // caught on "Next". See findMissingRequiredFields.
+  const [showMissingFieldsModal, setShowMissingFieldsModal] = useState(false);
+  const [missingFieldIssues, setMissingFieldIssues] = useState([]);
   // "Suggest for me" AI helper for points-style fields (experience bullets,
   // achievements) — purely optional, never replaces manual typing. Keyed by
   // the same field id as the list itself, holding whatever suggestions were
@@ -503,6 +579,7 @@ export default function AtsCvBuilder({ accessCode }) {
     setAiSummaryGenerated(false);
     setAiSummaryError("");
     setForm((f) => ({ ...f, summary: "" }));
+    setSummaryInputSnapshot(null);
     setItemsEnhanced(false);
     setAiItemsError("");
     setEnhancedItems({});
@@ -1143,7 +1220,7 @@ export default function AtsCvBuilder({ accessCode }) {
     { title: "", employer: "", fromMonth: "", fromYear: "", toMonth: "", toYear: "", current: false, bullets: [] },
   ]);
   const [education, setEducation] = useState(saved?.education ?? [
-    { degreeChoice: "", degreeCustom: "", specializationChoice: "", specializationCustom: "", schoolChoice: "", schoolCustom: "", year: "", detail: "", gradProject: "" },
+    { degreeChoice: "", degreeCustom: "", specializationChoice: "", specializationCustom: "", schoolChoice: "", schoolCustom: "", year: "", gpaValue: "", gpaScale: "", gradProject: "" },
   ]);
   const [techSkillTags, setTechSkillTags] = useState(saved?.techSkillTags ?? []);
   const [softSkillTags, setSoftSkillTags] = useState(saved?.softSkillTags ?? []);
@@ -1171,10 +1248,10 @@ export default function AtsCvBuilder({ accessCode }) {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed, sourceChosen,
         form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries,
-        courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied,
+        courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -1188,7 +1265,7 @@ export default function AtsCvBuilder({ accessCode }) {
   };
 
   // ── Education helpers ──
-  const addEdu = () => setEducation([...education, { degreeChoice: "", degreeCustom: "", specializationChoice: "", specializationCustom: "", schoolChoice: "", schoolCustom: "", year: "", detail: "", gradProject: "" }]);
+  const addEdu = () => setEducation([...education, { degreeChoice: "", degreeCustom: "", specializationChoice: "", specializationCustom: "", schoolChoice: "", schoolCustom: "", year: "", gpaValue: "", gpaScale: "", gradProject: "" }]);
   const rmEdu = (i) => setEducation(education.filter((_, x) => x !== i));
   const setEdu = (i, k) => (e) => {
     const copy = [...education];
@@ -1241,9 +1318,35 @@ export default function AtsCvBuilder({ accessCode }) {
   const canProceed = () => {
     if (step === 0) return !!(form.name && form.phone && targetRoles.length > 0);
     if (step === 1) return !experiences.some(dateRangeInvalid);
-    if (step === 2) return education.every((x) => x.schoolChoice !== OTHER || x.schoolCustom.trim());
+    if (step === 2) {
+      return education.every((x) => x.schoolChoice !== OTHER || x.schoolCustom.trim())
+        && !education.some((x) => gpaExceedsScale(x.gpaValue, x.gpaScale));
+    }
     return true;
   };
+
+  // The same requirements canProceed() enforces per-step, but checked all
+  // at once regardless of which step is currently active — canProceed()
+  // alone only blocks "Next" on the step you happen to be on, so jumping
+  // straight to a later section via the step menu (never touching "Next"
+  // on step 0) bypassed it entirely, letting an applicant reach Preview/
+  // Export with e.g. no name at all. Called at Preview and Export time
+  // (see proceedToPreview / downloadPDF) so the same requirements hold
+  // regardless of navigation path.
+  function findMissingRequiredFields() {
+    const issues = [];
+    if (!form.name?.trim()) issues.push({ step: 0, message: L.nameLabel });
+    if (!form.phone?.trim()) issues.push({ step: 0, message: L.phoneLabel });
+    if (!targetRoles.length) issues.push({ step: 0, message: L.targetRolesLabel });
+    if (experiences.some(dateRangeInvalid)) issues.push({ step: 1, message: L.dateOrderError });
+    if (education.some((x) => x.schoolChoice === OTHER && !x.schoolCustom.trim())) {
+      issues.push({ step: 2, message: L.universityOtherRequired });
+    }
+    if (education.some((x) => gpaExceedsScale(x.gpaValue, x.gpaScale))) {
+      issues.push({ step: 2, message: L.gpaExceedsScaleError });
+    }
+    return issues;
+  }
 
   // ── Bilingual option lists + labels for the new controls ──
   const sep = cvLang === "en" ? ", " : "، ";
@@ -1314,12 +1417,13 @@ export default function AtsCvBuilder({ accessCode }) {
         const degreeMatch = matchOption(x.degree, AR_DEGREES, EN_DEGREES, degreeOptions);
         const majorMatch = matchOption(x.major, AR_MAJORS, EN_MAJORS, majorOptions);
         const uniMatch = matchOption(x.university, AR_UNIVERSITIES, EN_UNIVERSITIES, universityOptions);
+        const { gpaValue, gpaScale } = parseGpaScale(x.gpa);
         return {
           degreeChoice: degreeMatch.choice, degreeCustom: degreeMatch.custom,
           specializationChoice: majorMatch.choice, specializationCustom: majorMatch.custom,
           schoolChoice: uniMatch.choice, schoolCustom: uniMatch.custom,
           year: normalizeYear(x.year),
-          detail: String(x.gpa || "").trim(),
+          gpaValue, gpaScale,
           gradProject: String(x.gradProject || "").trim(),
         };
       }));
@@ -1406,14 +1510,17 @@ export default function AtsCvBuilder({ accessCode }) {
       : (LATIN_RE.test(extractedName) && !ARABIC_RE.test(extractedName));
     const resolvedName = nameWrongScript ? "" : extractedName;
 
-    const educationMatches = (Array.isArray(extracted.education) ? extracted.education : []).map((x) => ({
-      degreeMatch: matchOption(x.degree, AR_DEGREES, EN_DEGREES, degreeOptions),
-      majorMatch: matchOption(x.major, AR_MAJORS, EN_MAJORS, majorOptions),
-      uniMatch: matchOption(x.university, AR_UNIVERSITIES, EN_UNIVERSITIES, universityOptions),
-      year: normalizeYear(x.year),
-      detail: String(x.gpa || "").trim(),
-      gradProject: String(x.gradProject || "").trim(),
-    }));
+    const educationMatches = (Array.isArray(extracted.education) ? extracted.education : []).map((x) => {
+      const { gpaValue, gpaScale } = parseGpaScale(x.gpa);
+      return {
+        degreeMatch: matchOption(x.degree, AR_DEGREES, EN_DEGREES, degreeOptions),
+        majorMatch: matchOption(x.major, AR_MAJORS, EN_MAJORS, majorOptions),
+        uniMatch: matchOption(x.university, AR_UNIVERSITIES, EN_UNIVERSITIES, universityOptions),
+        year: normalizeYear(x.year),
+        gpaValue, gpaScale,
+        gradProject: String(x.gradProject || "").trim(),
+      };
+    });
 
     const languageMatches = (Array.isArray(extracted.languages) ? extracted.languages : []).map((x) => ({
       langMatch: matchOption(x.name, AR_LANGUAGE_OPTIONS, EN_LANGUAGE_OPTIONS, languageOptions),
@@ -1474,12 +1581,9 @@ export default function AtsCvBuilder({ accessCode }) {
       degreeIdx: e.degreeMatch.choice === OTHER && e.degreeMatch.custom ? push(e.degreeMatch.custom) : -1,
       majorIdx: e.majorMatch.choice === OTHER && e.majorMatch.custom ? push(e.majorMatch.custom) : -1,
       uniIdx: e.uniMatch.choice === OTHER && e.uniMatch.custom ? push(e.uniMatch.custom) : -1,
-      // GPA is often not a bare number in the source CV (e.g. "4.5 من 5"
-      // rather than just "4.5") — batch it like any other short free-text
-      // value so a descriptive suffix gets translated too, not just left
-      // stuck in the source language next to the target-language "GPA" /
-      // "المعدل" label.
-      detailIdx: e.detail ? push(e.detail) : -1,
+      // GPA is no longer free text (see gpaValue/gpaScale + parseGpaScale
+      // above) — a number and a fixed 4-or-5 scale have no language
+      // content to translate, so there's nothing to batch here anymore.
     }));
     // Same reasoning as GPA above — "yearsOfExperience" is frequently a
     // descriptive phrase (e.g. "أكثر من ثماني سنوات", "5+ years") rather
@@ -1558,7 +1662,7 @@ export default function AtsCvBuilder({ accessCode }) {
         schoolChoice: e.uniMatch.choice,
         schoolCustom: e.uniMatch.choice === OTHER ? at(eduSlots[i].uniIdx, e.uniMatch.custom) : e.uniMatch.custom,
         year: e.year,
-        detail: at(eduSlots[i].detailIdx, e.detail),
+        gpaValue: e.gpaValue, gpaScale: e.gpaScale,
         gradProject: e.gradProject,
       })));
     }
@@ -1681,6 +1785,9 @@ export default function AtsCvBuilder({ accessCode }) {
     specialization: "Specialization / Major", specializationSearchPh: "Search or select a major...",
     university: "University",
     gradYear: "Graduation Year", gpa: "GPA (optional)", addEdu: "Add another qualification",
+    gpaScaleLabel: "Scale", gpaScalePh: "Scale...", gpaScaleOutOf4: "Out of 4", gpaScaleOutOf5: "Out of 5",
+    gpaExceedsScaleError: "GPA cannot exceed the selected scale.",
+    gpaScaleRequiredHint: "Select a scale to show the GPA on your CV.",
     gradProject: "Graduation Project (optional)", gradProjectPh: "e.g. Inventory Management System",
     universityOtherRequired: "Please enter the university name.",
     skillsHeading: "Skills & Languages", techSkillsLabel: "Technical Skills",
@@ -1726,6 +1833,12 @@ export default function AtsCvBuilder({ accessCode }) {
     englishBlockedNotice: "This field must be entered in Arabic only for the Arabic CV (no translation).",
     translatingCv: "Translating your CV...",
     preparingCv: "Preparing your CV...",
+    nameLabel: "Full Name",
+    phoneLabel: "Phone Number",
+    requiredFieldsTitle: "Required fields are missing",
+    requiredFieldsIntro: "Please complete the following before you can preview or export your CV:",
+    requiredFieldsGoTo: "Go to this field",
+    requiredFieldsClose: "OK",
   } : {
     city: "المدينة", experienceHeading: "الخبرات العملية والتدريب", expCard: "خبرة",
     jobTitle: "المسمى الوظيفي", employer: "جهة العمل", from: "من", to: "إلى", month: "الشهر", year: "السنة",
@@ -1739,6 +1852,9 @@ export default function AtsCvBuilder({ accessCode }) {
     specialization: "التخصص", specializationSearchPh: "ابحث أو اختر التخصص...",
     university: "الجامعة",
     gradYear: "سنة التخرج", gpa: "المعدل (اختياري)", addEdu: "إضافة مؤهل آخر",
+    gpaScaleLabel: "المقياس", gpaScalePh: "المقياس...", gpaScaleOutOf4: "من 4", gpaScaleOutOf5: "من 5",
+    gpaExceedsScaleError: "المعدل لا يمكن أن يتجاوز المقياس المختار.",
+    gpaScaleRequiredHint: "اختر المقياس ليظهر المعدل في سيرتك الذاتية.",
     gradProject: "مشروع التخرج (اختياري)", gradProjectPh: "مثال: نظام إدارة المخزون",
     universityOtherRequired: "الرجاء إدخال اسم الجامعة.",
     skillsHeading: "المهارات واللغات", techSkillsLabel: "المهارات التقنية",
@@ -1784,6 +1900,12 @@ export default function AtsCvBuilder({ accessCode }) {
     englishBlockedNotice: "يجب إدخال هذا الحقل بالأحرف العربية فقط للسيرة العربية (بدون ترجمة).",
     translatingCv: "جارٍ ترجمة سيرتك الذاتية...",
     preparingCv: "جارٍ تجهيز سيرتك...",
+    nameLabel: "الاسم الكامل",
+    phoneLabel: "رقم الجوال",
+    requiredFieldsTitle: "هناك حقول مطلوبة غير مكتملة",
+    requiredFieldsIntro: "يُرجى إكمال ما يلي قبل التمكن من معاينة أو تصدير سيرتك الذاتية:",
+    requiredFieldsGoTo: "الانتقال لهذا الحقل",
+    requiredFieldsClose: "حسنًا",
   };
 
   // ── Validation (gentle, non-blocking) ──
@@ -1838,7 +1960,16 @@ export default function AtsCvBuilder({ accessCode }) {
       degree: [degreeLabel, specialization].filter(Boolean).join(" "),
       school,
       year: x.year,
-      detail: x.detail,
+      // "4.5 / 5" (English) or "4.5 من 5" (Arabic) — empty (renders
+      // nothing) unless both a value and a valid, in-range scale are set.
+      // Used for the client-side preview; the raw gpaValue/gpaScale below
+      // are sent alongside it so the server (generate-pdf) can
+      // independently re-validate and re-format rather than trusting this
+      // already-sanitized string — see cvHtmlTemplate.js's own
+      // formatGpaValue/gpaExceedsScale.
+      detail: formatGpaValue(x.gpaValue, x.gpaScale, cvLang),
+      gpaValue: x.gpaValue,
+      gpaScale: x.gpaScale,
       gradProject: gradProjectRaw ? getEnhancedText(`eduGradProject-${i}`, gradProjectRaw) : "",
     };
   });
@@ -1883,6 +2014,20 @@ export default function AtsCvBuilder({ accessCode }) {
     .join(" | ");
 
   async function downloadPDF() {
+    // Defense-in-depth alongside proceedToPreview's own check — nothing on
+    // the preview screen lets these specific fields (name/phone/target
+    // roles/dates/education) change, but exporting must never rely on
+    // "the earlier gate must still be true" being an invariant forever.
+    const issues = findMissingRequiredFields();
+    if (issues.length) {
+      setShowExportModal(false);
+      setMissingFieldIssues(issues);
+      setShowMissingFieldsModal(true);
+      // Back to the editable form, where the missing-fields modal (below,
+      // rendered on the form screen) can jump straight to the right step.
+      setPreview(false);
+      return;
+    }
     setDownloading(true);
     setExportError("");
     // iOS Safari doesn't support forced downloads (the `download` attribute
@@ -1965,10 +2110,52 @@ export default function AtsCvBuilder({ accessCode }) {
     }
   }
 
-  // Fire-and-forget: called once when the user first reaches the preview.
-  // Never overwrites a summary the user already generated/edited this
-  // session — aiSummaryGenerated is the guard for that.
+  // Everything the summary is actually generated FROM — compared against
+  // summaryInputSnapshot on every Preview visit to decide whether the
+  // cached summary is still valid (see the summaryInputSnapshot state
+  // comment above). cvLang is included too as a safety net alongside
+  // resetDerivedAiOutput's own language-switch handling, not as its only
+  // line of defense.
+  // Deliberately built from RAW form state (experiences/education as typed),
+  // never from displayExperiences/displayEducation — those two route bullet
+  // text and graduation-project text through getEnhancedText(), which
+  // returns whatever's already stored in enhancedItems for that key. Since
+  // enhancedItems is populated asynchronously (concurrently with this very
+  // summary call, via generateAiEnhancements), a snapshot built from them
+  // captures a moving target: it can differ from itself between two preview
+  // visits even when the user changed nothing, purely because enhancedItems
+  // caught up to the AI response in between — this was observed to cause a
+  // spurious extra regeneration on the visit right after any real change.
+  // Raw state changes synchronously the instant the user types, so it's a
+  // stable, race-free basis for "did the input actually change."
+  function buildSummaryInputSnapshot() {
+    return JSON.stringify({
+      lang: cvLang,
+      targetRoles: targetRoles.join(sep),
+      yearsOfExperience: form.yearsOfExperience,
+      experiences: experiences.map((x) => ({
+        title: x.title, employer: x.employer, period: formatPeriod(x, cvLang),
+        bullets: (x.bullets || []).map((b) => b.trim()).filter(Boolean).join("\n"),
+      })),
+      education: education.map((x) => ({
+        degree: x.degreeChoice === OTHER ? x.degreeCustom : x.degreeChoice,
+        specialization: x.specializationChoice === OTHER ? x.specializationCustom : x.specializationChoice,
+        school: x.schoolChoice === OTHER ? x.schoolCustom : x.schoolChoice,
+        year: x.year,
+        gpaValue: x.gpaValue,
+        gpaScale: x.gpaScale,
+        gradProject: x.gradProject,
+      })),
+      techSkills: techSkillsStr,
+      softSkills: softSkillsStr,
+    });
+  }
+
+  // Called whenever proceedToPreview finds the summary's input has changed
+  // (or it's never been generated) — never overwrites a summary whose
+  // input snapshot still matches the current input.
   async function generateAiSummary() {
+    const snapshot = buildSummaryInputSnapshot();
     setAiSummaryLoading(true);
     setAiSummaryError("");
     try {
@@ -1988,6 +2175,11 @@ export default function AtsCvBuilder({ accessCode }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.summary) throw new Error(data.error || "AI summary generation failed");
       setForm((f) => ({ ...f, summary: data.summary }));
+      // Only recorded on success — a failed attempt leaves this at its
+      // previous value (or null), so the NEXT Preview visit still sees
+      // the input as "stale" and retries, even if nothing changed since
+      // the failed attempt.
+      setSummaryInputSnapshot(snapshot);
     } catch (err) {
       // The server route already logs full diagnostic detail for this
       // failure (see [AI-SUMMARY-ERROR] in server logs) — this is just the
@@ -2053,30 +2245,53 @@ export default function AtsCvBuilder({ accessCode }) {
     return { keys, texts };
   }
 
-  // Fire-and-forget, same once-per-session guard as generateAiSummary — one
-  // batched call covers every bullet/achievement/graduation project/custom-
-  // section point, run alongside (not blocking on) the separate title
-  // spell-check call so either can fail independently and fall back to the
-  // applicant's original text/title without affecting the other.
+  // Compares each currently-collected item's raw text against the raw text
+  // its stored result was generated from (enhancedItems[key].original) —
+  // an item with no entry yet, no AI result yet, or whose raw text no
+  // longer matches what it was last generated from is "stale" and needs
+  // a fresh call; everything else already reflects its current input and
+  // is left alone.
+  function splitStaleItems(keys, texts) {
+    const staleKeys = [];
+    const staleTexts = [];
+    keys.forEach((k, idx) => {
+      const existing = enhancedItems[k];
+      if (!existing || existing.ai == null || existing.original !== texts[idx]) {
+        staleKeys.push(k);
+        staleTexts.push(texts[idx]);
+      }
+    });
+    return { staleKeys, staleTexts };
+  }
+
+  // Called on every Preview visit (not gated by a single "has this ever
+  // run" flag) — only the bullets/achievements/grad projects/custom-
+  // section points/titles whose raw text actually changed since their
+  // last successful result (see splitStaleItems) are sent for
+  // re-enhancement, so editing one bullet after going back from preview
+  // never re-translates every other unchanged one. Run alongside (not
+  // blocking on) the separate title spell-check call so either can fail
+  // independently and fall back to the applicant's original text/title
+  // without affecting the other.
   async function generateAiEnhancements() {
     const { keys, texts } = collectEnhancementItems();
     const { keys: titleKeys, texts: titleTexts } = collectCustomSectionTitles();
-    if (!keys.length && !titleKeys.length) {
+    const { staleKeys, staleTexts } = splitStaleItems(keys, texts);
+    const { staleKeys: staleTitleKeys, staleTexts: staleTitleTexts } = splitStaleItems(titleKeys, titleTexts);
+
+    if (!staleKeys.length && !staleTitleKeys.length) {
       setItemsEnhanced(true);
       return;
     }
 
-    // Seed immediately with the original text so the preview never shows
-    // blank/loading placeholders for these items — they quietly upgrade to
-    // the AI version once it arrives.
+    // Seed the stale items immediately with their (new) raw text — the
+    // preview never shows a blank/loading placeholder for them, and any
+    // manual edit tied to the OLD raw text is cleared here since that
+    // text no longer exists to have been edited from.
     setEnhancedItems((prev) => {
       const next = { ...prev };
-      keys.forEach((k, idx) => {
-        if (!next[k]) next[k] = { original: texts[idx], ai: null, current: texts[idx], edited: false };
-      });
-      titleKeys.forEach((k, idx) => {
-        if (!next[k]) next[k] = { original: titleTexts[idx], ai: null, current: titleTexts[idx], edited: false };
-      });
+      staleKeys.forEach((k, idx) => { next[k] = { original: staleTexts[idx], ai: null, current: staleTexts[idx], edited: false }; });
+      staleTitleKeys.forEach((k, idx) => { next[k] = { original: staleTitleTexts[idx], ai: null, current: staleTitleTexts[idx], edited: false }; });
       return next;
     });
 
@@ -2084,18 +2299,18 @@ export default function AtsCvBuilder({ accessCode }) {
     setAiItemsError("");
 
     const [itemsOutcome, titlesOutcome] = await Promise.allSettled([
-      keys.length
+      staleKeys.length
         ? fetch("/api/enhance-items", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ lang: cvLang, items: texts }),
+            body: JSON.stringify({ lang: cvLang, items: staleTexts }),
           }).then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => ({})) }))
         : Promise.resolve(null),
-      titleKeys.length
+      staleTitleKeys.length
         ? fetch("/api/spellcheck-title", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ lang: cvLang, titles: titleTexts }),
+            body: JSON.stringify({ lang: cvLang, titles: staleTitleTexts }),
           }).then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => ({})) }))
         : Promise.resolve(null),
     ]);
@@ -2104,14 +2319,14 @@ export default function AtsCvBuilder({ accessCode }) {
     // a failure here is user-visible via aiItemsError, same as before this
     // feature — custom-section points are just more of the same kind of item.
     let itemsFailed = false;
-    if (keys.length) {
+    if (staleKeys.length) {
       const outcome = itemsOutcome.status === "fulfilled" ? itemsOutcome.value : null;
-      if (outcome?.ok && Array.isArray(outcome.data.items) && outcome.data.items.length === texts.length) {
+      if (outcome?.ok && Array.isArray(outcome.data.items) && outcome.data.items.length === staleTexts.length) {
         setEnhancedItems((prev) => {
           const next = { ...prev };
-          keys.forEach((k, idx) => {
-            if (next[k]?.edited) return; // a manual edit/revert in flight wins
-            next[k] = { original: texts[idx], ai: outcome.data.items[idx], current: outcome.data.items[idx], edited: false };
+          staleKeys.forEach((k, idx) => {
+            if (next[k]?.edited) return; // a manual edit made WHILE this call was in flight wins
+            next[k] = { original: staleTexts[idx], ai: outcome.data.items[idx], current: outcome.data.items[idx], edited: false };
           });
           return next;
         });
@@ -2123,14 +2338,14 @@ export default function AtsCvBuilder({ accessCode }) {
     // Title spell-check: conservative and low-stakes by design, so a
     // failure here just silently keeps the seeded original title — no
     // shared error banner, matching "fall back to original, nothing crashes".
-    if (titleKeys.length) {
+    if (staleTitleKeys.length) {
       const outcome = titlesOutcome.status === "fulfilled" ? titlesOutcome.value : null;
-      if (outcome?.ok && Array.isArray(outcome.data.titles) && outcome.data.titles.length === titleTexts.length) {
+      if (outcome?.ok && Array.isArray(outcome.data.titles) && outcome.data.titles.length === staleTitleTexts.length) {
         setEnhancedItems((prev) => {
           const next = { ...prev };
-          titleKeys.forEach((k, idx) => {
+          staleTitleKeys.forEach((k, idx) => {
             if (next[k]?.edited) return;
-            next[k] = { original: titleTexts[idx], ai: outcome.data.titles[idx], current: outcome.data.titles[idx], edited: false };
+            next[k] = { original: staleTitleTexts[idx], ai: outcome.data.titles[idx], current: outcome.data.titles[idx], edited: false };
           });
           return next;
         });
@@ -2146,19 +2361,30 @@ export default function AtsCvBuilder({ accessCode }) {
     setEnhancedItems((prev) => ({ ...prev, [key]: { ...prev[key], current: value, edited: true } }));
   }
 
+  // Both the original and the AI/suggested version are already generated
+  // and stored on the item (original/ai) — toggling just switches which
+  // of the two already-stored strings is shown as "current" and flips the
+  // button's own label to name the OTHER one (tap "Original text" to see
+  // the original; once shown, the same button becomes "Suggested text" to
+  // switch back) — never calls the AI again. Discards a manual edit in
+  // favor of whichever stored version was just picked, same as picking
+  // either version has always meant "use this one," now in a single tap
+  // instead of a separate reveal-then-confirm step.
   function toggleOriginal(key) {
-    setOriginalToggles((prev) => ({ ...prev, [key]: !prev[key] }));
-  }
-
-  function useOriginalText(key) {
-    setEnhancedItems((prev) => ({ ...prev, [key]: { ...prev[key], current: prev[key].original, edited: true } }));
-    setOriginalToggles((prev) => ({ ...prev, [key]: false }));
+    const item = enhancedItems[key];
+    if (!item || item.ai == null) return;
+    const nowShowingOriginal = !originalToggles[key];
+    setOriginalToggles((prev) => ({ ...prev, [key]: nowShowingOriginal }));
+    setEnhancedItems((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], current: nowShowingOriginal ? prev[key].original : prev[key].ai, edited: false },
+    }));
   }
 
   // Renders one AI-enhanceable item: an editable field showing whatever is
-  // "current" (AI text, a manual edit, or the reverted original), plus —
-  // once an AI version actually exists — a small toggle to reveal the
-  // original and revert to it losslessly.
+  // "current" (AI text, a manual edit, or the toggled-to original), plus —
+  // once an AI version actually exists — a one-tap toggle between the two
+  // already-stored versions.
   function enhancedItemBlock(key, fallbackText) {
     const item = enhancedItems[key] || { original: fallbackText, ai: null, current: fallbackText };
     const hasAiVersion = item.ai != null;
@@ -2171,17 +2397,9 @@ export default function AtsCvBuilder({ accessCode }) {
           dir={cvDir}
         />
         {hasAiVersion && (
-          <div className="no-print">
-            <button type="button" onClick={() => toggleOriginal(key)} style={originalToggleBtn}>
-              {showingOriginal ? t.hideOriginal : t.showOriginal}
-            </button>
-            {showingOriginal && (
-              <div style={originalBox}>
-                <div style={{ marginBottom: 6 }}>{item.original}</div>
-                <button type="button" onClick={() => useOriginalText(key)} style={useOriginalBtn}>{t.useOriginal}</button>
-              </div>
-            )}
-          </div>
+          <button type="button" onClick={() => toggleOriginal(key)} style={originalToggleBtn} className="no-print">
+            {showingOriginal ? t.suggestedTextLabel : t.originalTextLabel}
+          </button>
         )}
       </div>
     );
@@ -2213,11 +2431,20 @@ export default function AtsCvBuilder({ accessCode }) {
   }
 
   async function proceedToPreview() {
+    const issues = findMissingRequiredFields();
+    if (issues.length) {
+      setMissingFieldIssues(issues);
+      setShowMissingFieldsModal(true);
+      return;
+    }
     setPreview(true);
-    const tasks = [];
-    if (!aiSummaryGenerated) tasks.push(generateAiSummary());
-    if (!itemsEnhanced) tasks.push(generateAiEnhancements());
-    if (!tasks.length) return; // already generated earlier this session — nothing to wait on
+    // generateAiEnhancements always runs — it checks per-item staleness
+    // itself (see splitStaleItems) and resolves immediately if nothing
+    // changed, so this never means "re-translate everything on every
+    // Preview visit," only "check whether anything needs it." The summary
+    // has its own equivalent check (buildSummaryInputSnapshot).
+    const summaryStale = !aiSummaryGenerated || buildSummaryInputSnapshot() !== summaryInputSnapshot;
+    const tasks = [summaryStale ? generateAiSummary() : null, generateAiEnhancements()].filter(Boolean);
     setPreviewGenerating(true);
     try {
       await Promise.allSettled(tasks);
@@ -2378,6 +2605,31 @@ export default function AtsCvBuilder({ accessCode }) {
     );
   }
 
+  // ─────────────── POST-EXPORT THANK-YOU (bilingual) ───────────────
+  // Reached only after a genuinely successful download (see downloadPDF,
+  // which is the single place exportCompleted flips true) — the access
+  // code is single-use, so this is the natural end of the flow rather
+  // than a banner layered on top of a CV the applicant can no longer
+  // usefully edit.
+  if (exportCompleted) {
+    return (
+      <div dir="rtl" style={{ minHeight: "100vh", background: THEME.pageBg, fontFamily: "'Segoe UI', Tahoma, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ width: "100%", maxWidth: 460, background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 32, boxShadow: "0 1px 3px rgba(20,40,60,.06)", textAlign: "center" }}>
+          <div style={{ background: THEME.primary, width: 56, height: 56, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px" }}>
+            <CheckCircle2 size={28} color="#ffffff" />
+          </div>
+          <div style={{ fontSize: 13.5, color: THEME.text, lineHeight: 2, marginBottom: 14 }} dir="rtl">
+            {THANK_YOU_MESSAGE_BILINGUAL.ar}
+          </div>
+          <div style={{ height: 1, background: THEME.border, margin: "16px 0" }} />
+          <div style={{ fontSize: 13.5, color: THEME.text, lineHeight: 2 }} dir="ltr">
+            {THANK_YOU_MESSAGE_BILINGUAL.en}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ───────────────────────── PREVIEW ─────────────────────────
   if (preview) {
     return (
@@ -2403,34 +2655,21 @@ export default function AtsCvBuilder({ accessCode }) {
           </div>
         )}
 
-        {/* toolbar - hidden on print */}
+        {/* toolbar - hidden on print. exportCompleted redirects to the
+            dedicated thank-you screen above before this ever renders, so
+            the export button here is always the "not yet exported" state. */}
         <div dir="rtl" className="no-print" style={{ background: C.ink, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 10 }}>
           <button onClick={() => setPreview(false)} style={btnGhostLight}>
             <ChevronRight size={16} /> رجوع للتعديل
           </button>
-          {exportCompleted ? (
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#ffffff", fontSize: 13, fontWeight: 700 }}>
-              <CheckCircle2 size={16} /> تم التصدير
-            </div>
-          ) : (
-            <button
-              onClick={() => { setExportError(""); setShowExportModal(true); }}
-              disabled={downloading}
-              style={{ ...btnBrass, opacity: downloading ? 0.7 : 1 }}
-            >
-              {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التحميل...</> : <><Download size={16} /> تحميل PDF</>}
-            </button>
-          )}
+          <button
+            onClick={() => { setExportError(""); setShowExportModal(true); }}
+            disabled={downloading}
+            style={{ ...btnBrass, opacity: downloading ? 0.7 : 1 }}
+          >
+            {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التحميل...</> : <><Download size={16} /> تحميل PDF</>}
+          </button>
         </div>
-
-        {exportCompleted && (
-          <div dir="rtl" className="no-print" style={{ background: THEME.soft, borderBottom: `1px solid ${THEME.border}`, padding: "14px 20px", textAlign: "center" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, color: THEME.primary, fontSize: 13.5, fontWeight: 700, lineHeight: 1.7 }}>
-              <CheckCircle2 size={18} />
-              تم تصدير سيرتك الذاتية بنجاح. لإنشاء سيرة جديدة، يرجى تقديم طلب جديد.
-            </div>
-          </div>
-        )}
 
         {showExportModal && (
           <div
@@ -2876,7 +3115,28 @@ export default function AtsCvBuilder({ accessCode }) {
                     )}
                     {selectField(`edu-${i}-year`, L.gradYear, x.year, setEdu(i, "year"), gradYearOptions)}
                   </div>
-                  {field(`edu-${i}-detail`, L.gpa, x.detail, setEdu(i, "detail"), { ph: "4.5 / 5" })}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                    <div>
+                      <label style={labelStyle}>{L.gpa}</label>
+                      <input
+                        value={x.gpaValue}
+                        onChange={(e) => setEdu(i, "gpaValue")({ target: { value: normalizeGpaInput(e.target.value) } })}
+                        placeholder="4.5"
+                        style={inputStyle}
+                        inputMode="decimal"
+                      />
+                      {gpaExceedsScale(x.gpaValue, x.gpaScale) && <div style={warnStyle}>{L.gpaExceedsScaleError}</div>}
+                      {x.gpaValue && !x.gpaScale && <div style={hintStyle}>{L.gpaScaleRequiredHint}</div>}
+                    </div>
+                    <div>
+                      <label style={labelStyle}>{L.gpaScaleLabel}</label>
+                      <select value={x.gpaScale} onChange={setEdu(i, "gpaScale")} style={inputStyle}>
+                        <option value="">{L.gpaScalePh}</option>
+                        <option value="4">{L.gpaScaleOutOf4}</option>
+                        <option value="5">{L.gpaScaleOutOf5}</option>
+                      </select>
+                    </div>
+                  </div>
                   {field(`edu-${i}-gradProject`, L.gradProject, x.gradProject, setEdu(i, "gradProject"), { ph: L.gradProjectPh })}
                 </div>
               ))}
@@ -3065,7 +3325,9 @@ export default function AtsCvBuilder({ accessCode }) {
             <div style={{ marginTop: 12, fontSize: 12, color: "#b3261e", textAlign: "center" }}>{L.dateOrderError}</div>
           )}
           {step === 2 && !canProceed() && (
-            <div style={{ marginTop: 12, fontSize: 12, color: "#b3261e", textAlign: "center" }}>{L.universityOtherRequired}</div>
+            <div style={{ marginTop: 12, fontSize: 12, color: "#b3261e", textAlign: "center" }}>
+              {education.some((x) => gpaExceedsScale(x.gpaValue, x.gpaScale)) ? L.gpaExceedsScaleError : L.universityOtherRequired}
+            </div>
           )}
         </div>
 
@@ -3099,6 +3361,44 @@ export default function AtsCvBuilder({ accessCode }) {
                 {t.missingSectionContinue}
               </button>
               <button onClick={() => setShowSectionWarningModal(false)} style={{ ...btnGhost, width: "100%", justifyContent: "center" }}>{t.missingSectionBack}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BLOCKING — unlike showSectionWarningModal above, there is no
+          "continue anyway": these are the same requirements canProceed()
+          already enforces per-step, just checked across every step at
+          once (see findMissingRequiredFields), so there's nothing left to
+          confirm past fixing them. */}
+      {showMissingFieldsModal && (
+        <div
+          role="presentation"
+          style={{ position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 100 }}
+        >
+          <div
+            dir={cvDir}
+            role="dialog"
+            aria-modal="true"
+            style={{ width: "100%", maxWidth: 430, background: THEME.card, borderRadius: 14, padding: 26, boxShadow: "0 12px 40px rgba(18,41,63,.4)" }}
+          >
+            <div style={{ fontSize: 17.5, fontWeight: 800, color: THEME.primary, marginBottom: 12 }}>{L.requiredFieldsTitle}</div>
+            <div style={{ fontSize: 13.5, color: THEME.text, lineHeight: 1.95, marginBottom: 14 }}>
+              {L.requiredFieldsIntro}
+            </div>
+            <ul style={{ margin: "0 0 20px", padding: cvDir === "rtl" ? "0 20px 0 0" : "0 0 0 20px", display: "flex", flexDirection: "column", gap: 8 }}>
+              {missingFieldIssues.map((issue, i) => (
+                <li key={i} style={{ fontSize: 13.5, color: "#b3261e", fontWeight: 600 }}>{issue.message}</li>
+              ))}
+            </ul>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button
+                onClick={() => { setShowMissingFieldsModal(false); setStep(missingFieldIssues[0].step); }}
+                style={{ ...btnPrimary, width: "100%" }}
+              >
+                {L.requiredFieldsGoTo}
+              </button>
+              <button onClick={() => setShowMissingFieldsModal(false)} style={{ ...btnGhost, width: "100%", justifyContent: "center" }}>{L.requiredFieldsClose}</button>
             </div>
           </div>
         </div>
@@ -3167,8 +3467,6 @@ const ulBody = (dir) => ({ margin: "5px 0 0", [dir === "ltr" ? "paddingLeft" : "
 const liBody = (dir) => ({ fontSize: 12.5, lineHeight: 1.7, color: "#333333", position: "relative", [dir === "ltr" ? "paddingLeft" : "paddingRight"]: 12, marginBottom: 3 });
 const skillCat = { fontWeight: 700, color: "#000000", fontSize: 12.5 };
 const originalToggleBtn = { background: "transparent", border: "none", padding: 0, marginTop: 2, fontSize: 10.5, color: "#5a7590", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" };
-const originalBox = { marginTop: 4, marginBottom: 4, padding: "8px 10px", background: "#f5f7fa", border: "1px dashed #dde4ec", borderRadius: 6, fontSize: 12, color: "#5a6b7a", lineHeight: 1.7 };
-const useOriginalBtn = { background: "#e8eef4", border: "1px solid #dde4ec", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#1a3a5c", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 
 const btnPrimary = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#1a3a5c", color: "#ffffff", border: "none", borderRadius: 8, padding: "11px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 const btnGhost = { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "#1a3a5c", border: "1px solid #dde4ec", borderRadius: 8, padding: "11px 18px", fontSize: 14, fontWeight: 600, fontFamily: "inherit" };

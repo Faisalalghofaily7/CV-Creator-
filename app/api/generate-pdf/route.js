@@ -115,6 +115,41 @@ export async function POST(request) {
       return NextResponse.json({ error: "لا يوجد كود دخول صالح لهذه الجلسة." }, { status: 400 });
     }
 
+    // Server-side re-check of the same mandatory fields the client already
+    // gates at Preview/Export (see findMissingRequiredFields in
+    // AtsCvBuilder.jsx) — never trust the browser alone for something a
+    // direct API call could otherwise bypass entirely. Only the fields
+    // that are unconditionally mandatory regardless of which step they
+    // live on are checked here (name/phone/target role); the date-range
+    // and education "Other" checks are pure form-completeness rules with
+    // no server-side consequence — an incomplete date or education entry
+    // still produces a coherent PDF, so they're left to the client gate.
+    const missingFields = [];
+    if (!form?.name?.trim()) missingFields.push(lang === "en" ? "Full Name" : "الاسم الكامل");
+    if (!form?.phone?.trim()) missingFields.push(lang === "en" ? "Phone Number" : "رقم الجوال");
+    if (!form?.targetRoles?.trim()) missingFields.push(lang === "en" ? "Target Role(s)" : "الوظيفة/الوظائف المستهدفة");
+    if (missingFields.length) {
+      const message = lang === "en"
+        ? `Cannot export an incomplete CV. Missing required field(s): ${missingFields.join(", ")}.`
+        : `لا يمكن تصدير سيرة ذاتية غير مكتملة. الحقول المطلوبة الناقصة: ${missingFields.join("، ")}.`;
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+
+    // Re-validate GPA against its selected scale server-side too (see
+    // gpaExceedsScale in AtsCvBuilder.jsx / cvHtmlTemplate.js) — a direct
+    // API call could otherwise ship a PDF with an out-of-range GPA.
+    const gpaInvalid = Array.isArray(education) && education.some((x) => {
+      const value = parseFloat(x?.gpaValue);
+      const scale = parseFloat(x?.gpaScale);
+      return !isNaN(value) && !isNaN(scale) && value > scale;
+    });
+    if (gpaInvalid) {
+      const message = lang === "en"
+        ? "GPA cannot exceed the selected scale."
+        : "المعدل لا يمكن أن يتجاوز المقياس المختار.";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+
     const sql = getSql();
     // Read-only pre-check: fails fast on an already-used/unknown code
     // before spending time launching Chromium. The code isn't consumed
