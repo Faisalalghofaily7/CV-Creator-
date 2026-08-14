@@ -2146,6 +2146,7 @@ export default function AtsCvBuilder({ accessCode }) {
         gpaScale: x.gpaScale,
         gradProject: x.gradProject,
       })),
+      achievements: achievements.map((a) => a.trim()).filter(Boolean),
       techSkills: techSkillsStr,
       softSkills: softSkillsStr,
     });
@@ -2168,6 +2169,7 @@ export default function AtsCvBuilder({ accessCode }) {
           yearsOfExperience: form.yearsOfExperience,
           experiences: displayExperiences,
           education: displayEducation,
+          achievements: displayAchievementsStr,
           techSkills: techSkillsStr,
           softSkills: softSkillsStr,
         }),

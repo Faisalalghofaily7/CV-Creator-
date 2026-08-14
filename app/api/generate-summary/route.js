@@ -31,7 +31,7 @@ function buildSystemPrompt(lang) {
   return `You are a professional CV writer specialized in the Saudi job market. Write a professional summary for the applicant based on their data, in ${languageName}.
 
 Instructions:
-1. Write a summary oriented toward the target role, making the best possible use of the applicant's real experience and capabilities, blended with what that role actually calls for.
+1. Write a summary oriented toward the target role, making the best possible use of the applicant's real experience, achievements, and capabilities, blended with what that role actually calls for.
 2. Judge the right length and depth yourself, holistically, from the applicant's whole profile — their actual experience, seniority, achievements, role, and skills. Do NOT use a mechanical rule like "X years = Y lines." A more accomplished, senior profile can naturally warrant a fuller summary; a lighter or junior profile warrants a shorter, focused one — but let the substance of what they've actually done drive that, not a formula.
 3. HARD LIMIT, NON-NEGOTIABLE: the summary must be AT MOST ${SUMMARY_MAX_WORDS} words total (that's what keeps it to roughly 5 lines in the final document), no matter how senior or accomplished the applicant is. Before you finish, COUNT the words in your draft. If it is more than ${SUMMARY_MAX_WORDS} words, you MUST cut it down — combine sentences or remove the least essential ones — until it is at or under ${SUMMARY_MAX_WORDS} words. Never submit a draft you haven't counted. A senior profile that seems to need more room must still be compressed to fit; density, not length, is how you show seniority.
 4. HONESTY is critical: base the summary strictly on the real inputs. Never over-qualify or inflate a profile — a junior applicant must never be made to sound senior. Never pad the summary to fill space or reach a target length; if the applicant's real substance is modest, keep the summary appropriately concise rather than stretching it with generic filler.
@@ -165,7 +165,7 @@ async function enforceSummaryCap(client, lang, summary) {
 // Renders the applicant's data as a plain labeled block for the model —
 // deliberately kept separate from the system prompt (which carries all the
 // behavioral rules) so this is unambiguously *data*, not instructions.
-function buildApplicantData({ targetRoles, yearsOfExperience, experiences, education, techSkills, softSkills }) {
+function buildApplicantData({ targetRoles, yearsOfExperience, experiences, education, achievements, techSkills, softSkills }) {
   const lines = [];
 
   if (targetRoles) lines.push(`Target role(s): ${targetRoles}`);
@@ -194,6 +194,12 @@ function buildApplicantData({ targetRoles, yearsOfExperience, experiences, educa
     });
   }
 
+  const achievementLines = (achievements || "").split("\n").map((a) => a.trim()).filter(Boolean);
+  if (achievementLines.length) {
+    lines.push("", "Achievements:");
+    achievementLines.forEach((a) => lines.push(`   - ${a}`));
+  }
+
   if (techSkills) lines.push("", `Technical skills: ${techSkills}`);
   if (softSkills) lines.push("", `Soft skills: ${softSkills}`);
 
@@ -208,6 +214,7 @@ export async function POST(request) {
     const yearsOfExperience = typeof body.yearsOfExperience === "string" ? body.yearsOfExperience.trim() : "";
     const experiences = Array.isArray(body.experiences) ? body.experiences : [];
     const education = Array.isArray(body.education) ? body.education : [];
+    const achievements = typeof body.achievements === "string" ? body.achievements.trim() : "";
     const techSkills = typeof body.techSkills === "string" ? body.techSkills.trim() : "";
     const softSkills = typeof body.softSkills === "string" ? body.softSkills.trim() : "";
 
@@ -236,7 +243,7 @@ export async function POST(request) {
             messages: [
               {
                 role: "user",
-                content: buildApplicantData({ targetRoles, yearsOfExperience, experiences, education, techSkills, softSkills }),
+                content: buildApplicantData({ targetRoles, yearsOfExperience, experiences, education, achievements, techSkills, softSkills }),
               },
             ],
           },
