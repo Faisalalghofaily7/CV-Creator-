@@ -268,6 +268,21 @@ const TRANSLATION_REVIEW_NOTICE_BILINGUAL = {
   ar: "قمنا بترجمة سيرتك تلقائيًا — يُرجى مراجعة الأسماء والمصطلحات والجهات بعناية والتأكد من صحتها قبل المتابعة.",
 };
 
+// Appends the "years experience" / "سنوات خبرة" label to a years-of-
+// experience value, UNLESS the value already ends with that exact label —
+// a safety net against a translated/extracted value that (against the
+// translate-extraction prompt's instructions) folded the label wording
+// into the value itself, which would otherwise render duplicated, e.g.
+// "4 سنوات خبرة سنوات خبرة". Same helper duplicated in lib/cvHtmlTemplate.js
+// (the server-side PDF template) since the two run in separate modules.
+function formatYearsLine(value, label) {
+  const v = String(value || "").trim();
+  if (!v) return "";
+  const trimmedLabel = String(label || "").trim();
+  if (trimmedLabel && v.toLowerCase().endsWith(trimmedLabel.toLowerCase())) return v;
+  return trimmedLabel ? `${v} ${trimmedLabel}` : v;
+}
+
 function matchOption(value, arList, enList, activeList) {
   const v = String(value || "").trim();
   if (!v) return { choice: "", custom: "" };
@@ -468,7 +483,26 @@ export default function AtsCvBuilder({ accessCode }) {
     // a change, since the "العربية"/"English" option buttons on the
     // language screen already call setCvLang live as the user clicks
     // between them, before "متابعة" ever runs this function.
-    if (lang !== priorConfirmedLang) remapStructuredFieldsForLanguage(lang);
+    if (lang !== priorConfirmedLang) {
+      remapStructuredFieldsForLanguage(lang);
+      // The AI-generated summary and the polished experience/achievement/
+      // custom-section bullets are LANGUAGE-DEPENDENT output, cached under
+      // aiSummaryGenerated/itemsEnhanced so a preview revisit doesn't
+      // re-call the AI needlessly. A real language change invalidates that
+      // cache — otherwise proceedToPreview's "already generated" guards
+      // skip regeneration entirely and the preview keeps showing the
+      // previous language's summary/bullets untranslated. This never
+      // touches the underlying raw experiences/achievements/customSections
+      // data itself, only the flags (and cached AI text) that gate
+      // regenerating from it.
+      setAiSummaryGenerated(false);
+      setItemsEnhanced(false);
+      // Also back out of an already-open preview (if any) rather than
+      // silently leaving the stale one on screen — the applicant has to
+      // hit "Preview" again, which is exactly what re-triggers correct
+      // regeneration against the new language.
+      setPreview(false);
+    }
     setCvLang(lang);
     setLangConfirmed(true);
   }
@@ -1734,7 +1768,7 @@ export default function AtsCvBuilder({ accessCode }) {
   // Single clean "email | phone | city | LinkedIn | years experience" line —
   // no dedicated headline field is collected, so the professional title
   // under the name is simply the most recent role's job title, if any.
-  const contactLineParts = [form.email, cvPhoneValue, cityValue, form.linkedin, form.yearsOfExperience && `${form.yearsOfExperience} ${t.yearsOfExperience}`].filter(Boolean);
+  const contactLineParts = [form.email, cvPhoneValue, cityValue, form.linkedin, form.yearsOfExperience && formatYearsLine(form.yearsOfExperience, t.yearsOfExperience)].filter(Boolean);
 
   // Resolves an AI-enhanceable item to whatever it should actually show/
   // export as right now: the AI version, a manual edit, or a reverted-to-
