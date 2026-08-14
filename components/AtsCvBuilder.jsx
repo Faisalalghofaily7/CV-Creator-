@@ -477,6 +477,43 @@ export default function AtsCvBuilder({ accessCode }) {
   const cvDir = cvLang === "ar" ? "rtl" : "ltr";
   const t = CV_LABELS[cvLang];
 
+  // The AI-generated summary and the polished experience/achievement/
+  // custom-section bullets are DERIVED output — always a function of the
+  // CURRENT raw experiences/achievements/customSections plus the CURRENT
+  // cvLang, never something to keep around once either one changes out
+  // from under it. Resetting only the aiSummaryGenerated/itemsEnhanced
+  // guard flags (an earlier attempt at this) turned out to be
+  // insufficient: it correctly re-triggers generation, but the STALE
+  // content underneath — form.summary, and each enhancedItems[key]'s
+  // original/ai/current slots plus its originalToggles[key] open/closed
+  // state — was still sitting there. Since enhancedItems is keyed
+  // positionally (e.g. "exp-0-bullet-1") and those same keys reappear
+  // after a re-upload of the same (or a similarly-shaped) CV, the
+  // regeneration's own seed step (`if (!next[k]) ...`) sees an entry
+  // already there and skips reseeding it, and any timing hiccup in the
+  // apply step can leave a leftover previous value in one slot while the
+  // new value lands in the other. Called on every event that replaces
+  // the underlying CV content — a language switch (confirmLanguage), a
+  // fresh upload (applyExtractedData), or a mismatch-triggered re-upload
+  // (applyExtractedDataWithTranslation) — not just a language change, so
+  // re-uploading the same CV after a failed/fallback translation without
+  // ever touching the language screen still gets a clean regeneration
+  // instead of silently reusing the previous attempt's result.
+  function resetDerivedAiOutput() {
+    setAiSummaryGenerated(false);
+    setAiSummaryError("");
+    setForm((f) => ({ ...f, summary: "" }));
+    setItemsEnhanced(false);
+    setAiItemsError("");
+    setEnhancedItems({});
+    setOriginalToggles({});
+    // Also back out of an already-open preview (if any) rather than
+    // silently leaving the stale one on screen — the applicant has to
+    // hit "Preview" again, which is exactly what re-triggers correct
+    // regeneration against the current data/language.
+    setPreview(false);
+  }
+
   function confirmLanguage(lang) {
     // Only remap when the language is actually changing versus what was
     // last CONFIRMED — comparing against cvLang itself would never detect
@@ -485,39 +522,7 @@ export default function AtsCvBuilder({ accessCode }) {
     // between them, before "متابعة" ever runs this function.
     if (lang !== priorConfirmedLang) {
       remapStructuredFieldsForLanguage(lang);
-      // The AI-generated summary and the polished experience/achievement/
-      // custom-section bullets are LANGUAGE-DEPENDENT output. Resetting
-      // only the aiSummaryGenerated/itemsEnhanced guard flags (an earlier
-      // attempt at this fix) turned out to be insufficient: it correctly
-      // re-triggers generation, but the STALE content underneath —
-      // form.summary, and each enhancedItems[key]'s original/ai/current
-      // slots plus its originalToggles[key] open/closed state — was still
-      // sitting there from the previous language the whole time. Since
-      // enhancedItems is keyed positionally (e.g. "exp-0-bullet-1") and
-      // those same keys reappear after a re-upload of the same CV, the
-      // regeneration's own seed step (`if (!next[k]) ...`) sees an
-      // entry already there and skips reseeding it, and any timing hiccup
-      // in the apply step can leave a leftover previous-language value in
-      // one slot while the new value lands in the other — surfacing as
-      // the old language showing as the primary text with the new
-      // language only reachable via "original text" (or vice versa).
-      // Wiping all of it below means regeneration always starts from a
-      // clean slate — the seed step always re-seeds, the apply step
-      // always writes both slots fresh from this run's own result, and no
-      // toggle can carry over pointing at a slot that no longer means
-      // what it used to.
-      setAiSummaryGenerated(false);
-      setAiSummaryError("");
-      setForm((f) => ({ ...f, summary: "" }));
-      setItemsEnhanced(false);
-      setAiItemsError("");
-      setEnhancedItems({});
-      setOriginalToggles({});
-      // Also back out of an already-open preview (if any) rather than
-      // silently leaving the stale one on screen — the applicant has to
-      // hit "Preview" again, which is exactly what re-triggers correct
-      // regeneration against the new language.
-      setPreview(false);
+      resetDerivedAiOutput();
     }
     setCvLang(lang);
     setLangConfirmed(true);
@@ -1266,6 +1271,11 @@ export default function AtsCvBuilder({ accessCode }) {
   // warnings, preview with AI enhancement, export. Anything the extraction
   // didn't find is simply left at its default (empty), same as a blank form.
   function applyExtractedData(extracted) {
+    // See resetDerivedAiOutput — this is about to replace the underlying
+    // experiences/achievements/customSections/form data, so any AI summary
+    // or polished bullets generated against the PREVIOUS data must not
+    // survive to be silently reused against the new data.
+    resetDerivedAiOutput();
     const cityMatch = matchOption(extracted.city, AR_CITIES, EN_CITIES, cityOptions);
     // Names are never auto-translated/transliterated (same rule as manual
     // entry) — an Arabic name found while the CV language is English is
@@ -1375,6 +1385,12 @@ export default function AtsCvBuilder({ accessCode }) {
   // using applyExtractedData completely unchanged, so this new path can
   // never regress it.
   async function applyExtractedDataWithTranslation(extracted) {
+    // See resetDerivedAiOutput — this is about to replace the underlying
+    // experiences/achievements/customSections/form data, so any AI summary
+    // or polished bullets generated against the PREVIOUS data (including a
+    // previous failed/fallback attempt for this exact same CV) must not
+    // survive to be silently reused against the new data.
+    resetDerivedAiOutput();
     const cityMatch = matchOption(extracted.city, AR_CITIES, EN_CITIES, cityOptions);
 
     // Bidirectional mirror of applyExtractedData's name rule: a name is
