@@ -545,11 +545,16 @@ export default function AdminCodes({ role, staffType }) {
           {generateError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#b3261e" }}>{generateError}</div>}
 
           {lastGenerated && (
-            <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10, background: C.soft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px" }}>
-              <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: 1, color: C.ink, fontFamily: "monospace" }}>{lastGenerated.code}</span>
-              <button onClick={() => handleCopy(lastGenerated.code)} style={btnIcon} title="نسخ">
-                {copiedCode === lastGenerated.code ? <Check size={17} color="#1a3a5c" /> : <Copy size={17} color="#1a3a5c" />}
-              </button>
+            <div style={{ marginTop: 18, background: C.soft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: 1, color: C.ink, fontFamily: "monospace" }}>{lastGenerated.code}</span>
+                <button onClick={() => handleCopy(lastGenerated.code)} style={btnIcon} title="نسخ">
+                  {copiedCode === lastGenerated.code ? <Check size={17} color="#1a3a5c" /> : <Copy size={17} color="#1a3a5c" />}
+                </button>
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <WhatsappMessageBox message={lastGenerated.whatsapp_message} defaultOpen />
+              </div>
             </div>
           )}
 
@@ -562,6 +567,9 @@ export default function AdminCodes({ role, staffType }) {
                 </span>
               </div>
               <NotificationStatusLine status={lastLinkedinOrder.notification_status} email={lastLinkedinOrder.notified_email} />
+              <div style={{ marginTop: 10 }}>
+                <WhatsappMessageBox message={lastLinkedinOrder.whatsapp_message} defaultOpen />
+              </div>
             </div>
           )}
         </div>
@@ -649,6 +657,9 @@ export default function AdminCodes({ role, staffType }) {
                     {expanded && (
                       <tr>
                         <td colSpan={10} style={{ padding: "10px 14px", background: C.soft, borderTop: `1px dashed ${C.line}` }}>
+                          <div style={{ marginBottom: 12 }}>
+                            <WhatsappMessageBox message={c.whatsapp_message} defaultOpen />
+                          </div>
                           <TimelineList history={history} />
                         </td>
                       </tr>
@@ -727,7 +738,7 @@ export default function AdminCodes({ role, staffType }) {
                 )}
 
                 {uploadResult.generatedCodes?.length > 0 && (
-                  <div style={{ maxHeight: 220, overflowY: "auto", background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 8, marginBottom: uploadResult.generatedLinkedinOrders?.length > 0 ? 12 : 0 }}>
+                  <div style={{ maxHeight: 320, overflow: "auto", background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 8, marginBottom: uploadResult.generatedLinkedinOrders?.length > 0 ? 12 : 0 }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                       <thead>
                         <tr style={{ background: C.soft }}>
@@ -735,6 +746,7 @@ export default function AdminCodes({ role, staffType }) {
                           <th style={thStyle}>رقم طلب سلة</th>
                           <th style={thStyle}>اسم العميل</th>
                           <th style={thStyle}>الخدمة المكتشفة</th>
+                          <th style={thStyle}>رسالة واتساب</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -744,6 +756,7 @@ export default function AdminCodes({ role, staffType }) {
                             <td style={tdStyle}><CopyField value={g.sallaOrderNumber} /></td>
                             <td style={tdStyle}>{g.applicantName || "—"}</td>
                             <td style={{ ...tdStyle, fontSize: 11.5 }}>{g.requestedPackage || "—"}</td>
+                            <td style={{ ...tdStyle, minWidth: 220 }}><WhatsappMessageBox message={g.whatsappMessage} /></td>
                           </tr>
                         ))}
                       </tbody>
@@ -752,7 +765,7 @@ export default function AdminCodes({ role, staffType }) {
                 )}
 
                 {uploadResult.generatedLinkedinOrders?.length > 0 && (
-                  <div style={{ maxHeight: 220, overflowY: "auto", background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 8 }}>
+                  <div style={{ maxHeight: 320, overflow: "auto", background: C.paperCard, border: `1px solid ${C.line}`, borderRadius: 8 }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                       <thead>
                         <tr style={{ background: C.soft }}>
@@ -760,6 +773,7 @@ export default function AdminCodes({ role, staffType }) {
                           <th style={thStyle}>اسم العميل</th>
                           <th style={thStyle}>النوع</th>
                           <th style={thStyle}>الإشعار</th>
+                          <th style={thStyle}>رسالة واتساب</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -777,6 +791,7 @@ export default function AdminCodes({ role, staffType }) {
                                 <span style={{ color: "#b3261e", fontWeight: 700 }}>فشل الإرسال</span>
                               )}
                             </td>
+                            <td style={{ ...tdStyle, minWidth: 220 }}><WhatsappMessageBox message={g.whatsappMessage} /></td>
                           </tr>
                         ))}
                       </tbody>
@@ -915,6 +930,10 @@ export default function AdminCodes({ role, staffType }) {
                     </div>
 
                     {statusErrors[v.id] && <div style={{ marginTop: 8, fontSize: 12, color: "#b3261e" }}>{statusErrors[v.id]}</div>}
+
+                    <div style={{ marginTop: 10 }}>
+                      <WhatsappMessageBox message={v.whatsapp_message} defaultOpen />
+                    </div>
 
                     {expanded && (
                       <div style={historyBox}>
@@ -1228,6 +1247,10 @@ function LinkedinPanel({ orders, loading, error, statusFilter, setStatusFilter, 
                   <div style={{ marginTop: 8, fontSize: 12, color: C.slate }}>سيصل إشعار لينكدإن عند توليد السيرة الذاتية.</div>
                 ) : null}
 
+                <div style={{ marginTop: 10 }}>
+                  <WhatsappMessageBox message={o.whatsappMessage} defaultOpen />
+                </div>
+
                 {expanded && (
                   <div style={historyBox}>
                     <LinkedinTimelineList history={history} />
@@ -1341,6 +1364,50 @@ function CopyField({ value, mono }) {
         {copied ? <Check size={12} color="#1a3a5c" /> : <Copy size={12} />}
       </button>
     </span>
+  );
+}
+
+// Auto-generated, copy-ready WhatsApp message for an order/code record —
+// the message text itself is always server-computed (see buildWhatsappMessage
+// in lib/whatsappTemplates.js and every app/api/admin/* route that returns
+// a record), this component only ever displays what it's given. Shown as a
+// read-only box with its own copy button, so staff can grab it without
+// touching the text. defaultOpen keeps it collapsed in dense list/table
+// rows but expanded in the "just generated" success boxes and the
+// full-detail archive/LinkedIn cards, where it's the most relevant thing
+// on screen.
+function WhatsappMessageBox({ message, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [copied, setCopied] = useState(false);
+  if (!message) return null;
+  return (
+    <div>
+      <button type="button" onClick={() => setOpen((o) => !o)} style={btnHistoryToggle}>
+        {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />} رسالة واتساب جاهزة
+      </button>
+      {open && (
+        <div style={{ marginTop: 8 }}>
+          <textarea
+            readOnly
+            value={message}
+            dir="rtl"
+            rows={7}
+            style={{ ...inputStyle, resize: "vertical", lineHeight: 1.9, fontFamily: "inherit" }}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard?.writeText(message);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }}
+            style={{ ...btnHistoryToggle, marginTop: 6 }}
+          >
+            {copied ? <><Check size={14} /> تم النسخ</> : <>📋 نسخ الرسالة</>}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

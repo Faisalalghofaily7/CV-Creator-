@@ -3,6 +3,7 @@ import { getSql } from "../../../../lib/db";
 import { requireAdminApi, getAdminSessionFromRequest } from "../../../../lib/adminAuth";
 import { isValidLifecycleStatus } from "../../../../lib/lifecycleStatus";
 import { staffCanAccessRecord } from "../../../../lib/staffAccounts";
+import { buildWhatsappMessage } from "../../../../lib/whatsappTemplates";
 
 export const runtime = "nodejs";
 
@@ -39,7 +40,12 @@ export async function GET(request) {
     // only sees the slice of the archive their type covers — a legacy
     // staff-env login or the admin role has no staffType and sees
     // everything, unchanged from before this feature existed.
-    const visible = rows.filter((r) => staffCanAccessRecord(session?.staffType, r.requested_package));
+    const visible = rows
+      .filter((r) => staffCanAccessRecord(session?.staffType, r.requested_package))
+      .map((r) => ({
+        ...r,
+        whatsapp_message: buildWhatsappMessage({ name: r.applicant_name, code: r.code, requestedPackage: r.requested_package }),
+      }));
     return NextResponse.json({ cvs: visible });
   } catch (err) {
     console.error("Failed to list archived CVs:", err);

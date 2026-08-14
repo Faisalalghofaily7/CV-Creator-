@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSql } from "../../../../lib/db";
 import { requireAdminApi, getAdminSessionFromRequest } from "../../../../lib/adminAuth";
+import { buildWhatsappMessage } from "../../../../lib/whatsappTemplates";
 
 export const runtime = "nodejs";
 
@@ -62,6 +63,7 @@ export async function GET(request) {
         notificationStatus: r.notification_status,
         notifiedEmail: r.notified_email,
         notifiedAt: r.notified_at,
+        whatsappMessage: buildWhatsappMessage({ name: r.applicant_name, requestedPackage: r.requested_package }),
       })),
       ...integratedRows.map((r) => ({
         id: `cv-${r.id}`,
@@ -80,6 +82,7 @@ export async function GET(request) {
         notificationStatus: r.notification_status,
         notifiedEmail: r.notified_email,
         notifiedAt: r.notified_at,
+        whatsappMessage: buildWhatsappMessage({ name: r.applicant_name, code: r.code, requestedPackage: r.requested_package }),
       })),
     ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 

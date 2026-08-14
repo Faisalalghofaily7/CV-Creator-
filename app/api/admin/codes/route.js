@@ -4,6 +4,7 @@ import { requireAdminApi } from "../../../../lib/adminAuth";
 import { createAccessCode } from "../../../../lib/accessCodes";
 import { createLinkedinOrderAndNotify, sallaOrderNumberExists } from "../../../../lib/linkedinOrdersDb";
 import { PACKAGE_LINKEDIN } from "../../../../lib/staffAccounts";
+import { buildWhatsappMessage } from "../../../../lib/whatsappTemplates";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,11 @@ export async function GET(request) {
       FROM access_codes
       ORDER BY created_at DESC
     `;
-    return NextResponse.json({ codes: rows });
+    const codes = rows.map((r) => ({
+      ...r,
+      whatsapp_message: buildWhatsappMessage({ name: r.applicant_name, code: r.code, requestedPackage: r.requested_package }),
+    }));
+    return NextResponse.json({ codes });
   } catch (err) {
     console.error("Failed to list access codes:", err);
     return NextResponse.json({ error: "تعذّر الاتصال بقاعدة البيانات. حاول مرة أخرى." }, { status: 500 });
@@ -69,7 +74,12 @@ export async function POST(request) {
         generationSource: "manual",
         createdBy,
       });
-      return NextResponse.json({ linkedinOrder });
+      return NextResponse.json({
+        linkedinOrder: {
+          ...linkedinOrder,
+          whatsapp_message: buildWhatsappMessage({ name: linkedinOrder.applicant_name, requestedPackage: linkedinOrder.requested_package }),
+        },
+      });
     }
 
     // An Integrated code's LinkedIn track does NOT start here — Staff2's
@@ -86,7 +96,12 @@ export async function POST(request) {
       generationSource: "manual",
       createdBy,
     });
-    return NextResponse.json({ code: row });
+    return NextResponse.json({
+      code: {
+        ...row,
+        whatsapp_message: buildWhatsappMessage({ name: row.applicant_name, code: row.code, requestedPackage: row.requested_package }),
+      },
+    });
   } catch (err) {
     console.error("Failed to create access code:", err);
     return NextResponse.json({ error: "تعذّر إنشاء الكود. حاول مرة أخرى." }, { status: 500 });

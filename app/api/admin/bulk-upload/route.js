@@ -4,6 +4,7 @@ import { createAccessCode } from "../../../../lib/accessCodes";
 import { parseSallaOrdersWorkbook, isTargetStatus, classifyPackage, BulkImportError } from "../../../../lib/sallaBulkImport";
 import { createLinkedinOrderAndNotify, sallaOrderNumberExists } from "../../../../lib/linkedinOrdersDb";
 import { PACKAGE_LINKEDIN } from "../../../../lib/staffAccounts";
+import { buildWhatsappMessage } from "../../../../lib/whatsappTemplates";
 
 export const runtime = "nodejs";
 
@@ -100,6 +101,7 @@ export async function POST(request) {
           sallaOrderNumber: orderNumber,
           applicantName: row.name || null,
           notificationStatus: createdOrder.notification_status,
+          whatsappMessage: buildWhatsappMessage({ name: row.name || null, requestedPackage: PACKAGE_LINKEDIN }),
         });
         continue;
       }
@@ -119,7 +121,13 @@ export async function POST(request) {
         createdBy,
       });
       generated += 1;
-      generatedCodes.push({ code: created.code, sallaOrderNumber: orderNumber, applicantName: row.name || null, requestedPackage: detectedPackage });
+      generatedCodes.push({
+        code: created.code,
+        sallaOrderNumber: orderNumber,
+        applicantName: row.name || null,
+        requestedPackage: detectedPackage,
+        whatsappMessage: buildWhatsappMessage({ name: row.name || null, code: created.code, requestedPackage: detectedPackage }),
+      });
     }
 
     return NextResponse.json({
