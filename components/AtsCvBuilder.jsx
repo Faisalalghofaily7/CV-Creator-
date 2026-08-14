@@ -486,17 +486,33 @@ export default function AtsCvBuilder({ accessCode }) {
     if (lang !== priorConfirmedLang) {
       remapStructuredFieldsForLanguage(lang);
       // The AI-generated summary and the polished experience/achievement/
-      // custom-section bullets are LANGUAGE-DEPENDENT output, cached under
-      // aiSummaryGenerated/itemsEnhanced so a preview revisit doesn't
-      // re-call the AI needlessly. A real language change invalidates that
-      // cache — otherwise proceedToPreview's "already generated" guards
-      // skip regeneration entirely and the preview keeps showing the
-      // previous language's summary/bullets untranslated. This never
-      // touches the underlying raw experiences/achievements/customSections
-      // data itself, only the flags (and cached AI text) that gate
-      // regenerating from it.
+      // custom-section bullets are LANGUAGE-DEPENDENT output. Resetting
+      // only the aiSummaryGenerated/itemsEnhanced guard flags (an earlier
+      // attempt at this fix) turned out to be insufficient: it correctly
+      // re-triggers generation, but the STALE content underneath —
+      // form.summary, and each enhancedItems[key]'s original/ai/current
+      // slots plus its originalToggles[key] open/closed state — was still
+      // sitting there from the previous language the whole time. Since
+      // enhancedItems is keyed positionally (e.g. "exp-0-bullet-1") and
+      // those same keys reappear after a re-upload of the same CV, the
+      // regeneration's own seed step (`if (!next[k]) ...`) sees an
+      // entry already there and skips reseeding it, and any timing hiccup
+      // in the apply step can leave a leftover previous-language value in
+      // one slot while the new value lands in the other — surfacing as
+      // the old language showing as the primary text with the new
+      // language only reachable via "original text" (or vice versa).
+      // Wiping all of it below means regeneration always starts from a
+      // clean slate — the seed step always re-seeds, the apply step
+      // always writes both slots fresh from this run's own result, and no
+      // toggle can carry over pointing at a slot that no longer means
+      // what it used to.
       setAiSummaryGenerated(false);
+      setAiSummaryError("");
+      setForm((f) => ({ ...f, summary: "" }));
       setItemsEnhanced(false);
+      setAiItemsError("");
+      setEnhancedItems({});
+      setOriginalToggles({});
       // Also back out of an already-open preview (if any) rather than
       // silently leaving the stale one on screen — the applicant has to
       // hit "Preview" again, which is exactly what re-triggers correct
