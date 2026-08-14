@@ -343,6 +343,21 @@ function parseGpaScale(raw) {
   return { gpaValue: "", gpaScale: "" };
 }
 
+// Defense-in-depth against a summary that was cut off mid-word by the API
+// (see generate-summary/route.js's max_tokens guards) ever getting stuck
+// permanently: the input-snapshot check alone only catches a CHANGE in
+// input, so a summary that was already broken when it was generated (or
+// cached from before those server-side guards existed) would otherwise be
+// treated as "not stale" forever and never get another chance to
+// regenerate. A real, complete summary — in any language this app
+// supports — always ends on real sentence-final punctuation; anything
+// else is treated as incomplete and worth retrying on the next Preview.
+function looksTruncated(text) {
+  const t = (text || "").trim();
+  if (!t) return false;
+  return !/[.!?؟]$/.test(t);
+}
+
 function matchOption(value, arList, enList, activeList) {
   const v = String(value || "").trim();
   if (!v) return { choice: "", custom: "" };
@@ -508,6 +523,13 @@ export default function AtsCvBuilder({ accessCode }) {
   // re-call. aiSummaryGenerated alone only tracked "has this run at
   // least once," not "is it still current."
   const [summaryInputSnapshot, setSummaryInputSnapshot] = useState(saved?.summaryInputSnapshot ?? null);
+  // True the moment the user types into the summary box themselves, false
+  // again once a fresh AI generation lands. Lets the truncation safety net
+  // below (looksTruncated, in proceedToPreview) tell "this still-broken
+  // text is the AI's own unedited output — safe to silently replace" apart
+  // from "the user deliberately wrote something here that happens not to
+  // end in punctuation" — the latter must never be silently overwritten.
+  const [summaryEdited, setSummaryEdited] = useState(saved?.summaryEdited ?? false);
   // Blocking overlay shown on the preview screen for as long as the
   // summary/enhancement generation triggered by "معاينة السيرة الذاتية" is
   // still in flight — covers both the slow-retry case and the fast/normal
@@ -580,6 +602,7 @@ export default function AtsCvBuilder({ accessCode }) {
     setAiSummaryError("");
     setForm((f) => ({ ...f, summary: "" }));
     setSummaryInputSnapshot(null);
+    setSummaryEdited(false);
     setItemsEnhanced(false);
     setAiItemsError("");
     setEnhancedItems({});
@@ -1248,10 +1271,10 @@ export default function AtsCvBuilder({ accessCode }) {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed, sourceChosen,
         form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries,
-        courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot,
+        courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot, summaryEdited,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot, summaryEdited]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -2177,6 +2200,7 @@ export default function AtsCvBuilder({ accessCode }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.summary) throw new Error(data.error || "AI summary generation failed");
       setForm((f) => ({ ...f, summary: data.summary }));
+      setSummaryEdited(false);
       // Only recorded on success — a failed attempt leaves this at its
       // previous value (or null), so the NEXT Preview visit still sees
       // the input as "stale" and retries, even if nothing changed since
@@ -2445,7 +2469,14 @@ export default function AtsCvBuilder({ accessCode }) {
     // changed, so this never means "re-translate everything on every
     // Preview visit," only "check whether anything needs it." The summary
     // has its own equivalent check (buildSummaryInputSnapshot).
-    const summaryStale = !aiSummaryGenerated || buildSummaryInputSnapshot() !== summaryInputSnapshot;
+    // The truncation check only fires when the box still holds the AI's
+    // own, never-touched output (!summaryEdited) — a user's deliberate
+    // manual edit that happens not to end in punctuation must never be
+    // silently discarded.
+    const summaryStale =
+      !aiSummaryGenerated ||
+      buildSummaryInputSnapshot() !== summaryInputSnapshot ||
+      (!summaryEdited && looksTruncated(form.summary));
     const tasks = [summaryStale ? generateAiSummary() : null, generateAiEnhancements()].filter(Boolean);
     setPreviewGenerating(true);
     try {
@@ -2743,7 +2774,7 @@ export default function AtsCvBuilder({ accessCode }) {
                     )}
                     <AutoTextarea
                       value={form.summary}
-                      onChange={(e) => setForm((f) => ({ ...f, summary: guardLangInput("summary", e.target.value) }))}
+                      onChange={(e) => { setSummaryEdited(true); setForm((f) => ({ ...f, summary: guardLangInput("summary", e.target.value) })); }}
                       onBlur={(e) => setForm((f) => ({ ...f, summary: stripProseOnBlur("summary", e.target.value) }))}
                       placeholder={t.summaryPlaceholder}
                       dir={cvDir}
