@@ -243,12 +243,30 @@ function anyExperiencesOverlap(list) {
 // than asking the model to know the exact internal option values. Tries
 // both language lists so e.g. an Arabic CV's city still maps correctly onto
 // an English-mode form's option list (translation-by-lookup, not by AI).
-// A language's own display name, always shown in its own script regardless
-// of which language the surrounding sentence is in — same convention
-// already used for the "CV output language" label on the form screen.
-function langDisplayName(code) {
-  return code === "en" ? "English" : "العربية";
+// The mismatch popup and the post-translation review card are shown in
+// BOTH English and Arabic together, always — unlike the rest of the
+// platform UI (the L object below, which switches per cvLang) — so the
+// message is unambiguous no matter which language the applicant actually
+// reads. langNameInEnglish/langNameInArabic give each language's own name
+// as it should appear inside an English vs. an Arabic sentence.
+function langNameInEnglish(code) {
+  return code === "en" ? "English" : "Arabic";
 }
+function langNameInArabic(code) {
+  return code === "en" ? "الإنجليزية" : "العربية";
+}
+
+function langMismatchBodyBilingual(selectedCode, uploadedCode) {
+  return {
+    en: `You chose ${langNameInEnglish(selectedCode)} but uploaded a CV written in ${langNameInEnglish(uploadedCode)}. We'll do our best to translate it, but please review the result carefully — especially names and technical terms.`,
+    ar: `لقد اخترت اللغة ${langNameInArabic(selectedCode)} بينما السيرة المرفوعة باللغة ${langNameInArabic(uploadedCode)}. سنبذل قصارى جهدنا في الترجمة، لكن يُرجى مراجعة النتيجة بعناية — خاصة الأسماء والمصطلحات التقنية.`,
+  };
+}
+
+const TRANSLATION_REVIEW_NOTICE_BILINGUAL = {
+  en: "We automatically translated your CV — please carefully review names, terms, and organizations and make sure they're correct before continuing.",
+  ar: "قمنا بترجمة سيرتك تلقائيًا — يُرجى مراجعة الأسماء والمصطلحات والجهات بعناية والتأكد من صحتها قبل المتابعة.",
+};
 
 function matchOption(value, arList, enList, activeList) {
   const v = String(value || "").trim();
@@ -406,6 +424,12 @@ export default function AtsCvBuilder({ accessCode }) {
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [aiSummaryError, setAiSummaryError] = useState("");
   const [aiSummaryGenerated, setAiSummaryGenerated] = useState(saved?.aiSummaryGenerated ?? false);
+  // Blocking overlay shown on the preview screen for as long as the
+  // summary/enhancement generation triggered by "معاينة السيرة الذاتية" is
+  // still in flight — covers both the slow-retry case and the fast/normal
+  // success case equally, since it's driven by proceedToPreview awaiting
+  // the actual generation calls rather than by any retry-specific signal.
+  const [previewGenerating, setPreviewGenerating] = useState(false);
   // AI-enhanced experience bullets / achievements / graduation projects.
   // Keyed by a stable item key (e.g. "exp-0-bullet-1", "achievement-2",
   // "eduGradProject-0"). Each entry holds both the original user text and
@@ -1384,7 +1408,20 @@ export default function AtsCvBuilder({ accessCode }) {
       degreeIdx: e.degreeMatch.choice === OTHER && e.degreeMatch.custom ? push(e.degreeMatch.custom) : -1,
       majorIdx: e.majorMatch.choice === OTHER && e.majorMatch.custom ? push(e.majorMatch.custom) : -1,
       uniIdx: e.uniMatch.choice === OTHER && e.uniMatch.custom ? push(e.uniMatch.custom) : -1,
+      // GPA is often not a bare number in the source CV (e.g. "4.5 من 5"
+      // rather than just "4.5") — batch it like any other short free-text
+      // value so a descriptive suffix gets translated too, not just left
+      // stuck in the source language next to the target-language "GPA" /
+      // "المعدل" label.
+      detailIdx: e.detail ? push(e.detail) : -1,
     }));
+    // Same reasoning as GPA above — "yearsOfExperience" is frequently a
+    // descriptive phrase (e.g. "أكثر من ثماني سنوات", "5+ years") rather
+    // than a bare number, and gets concatenated with a target-language
+    // "years experience" / "سنوات خبرة" label on the CV, so it must be
+    // translated too or it leaves stray source-language text behind.
+    const yearsOfExperienceRaw = String(extracted.yearsOfExperience || "").trim();
+    const yearsOfExperienceIdx = yearsOfExperienceRaw ? push(yearsOfExperienceRaw) : -1;
     const langSlots = languageMatches.map((l) => (l.langMatch.choice === OTHER && l.langMatch.custom ? push(l.langMatch.custom) : -1));
     const techSlots = techSkillMatches.map((m) => (m.choice === OTHER && m.custom ? push(m.custom) : -1));
     const softSlots = softSkillMatches.map((m) => (m.choice === OTHER && m.custom ? push(m.custom) : -1));
@@ -1431,7 +1468,7 @@ export default function AtsCvBuilder({ accessCode }) {
       cityChoice: cityMatch.choice,
       cityCustom: cityMatch.choice === OTHER ? at(cityCustomIdx, cityMatch.custom) : cityMatch.custom,
       linkedin: String(extracted.linkedin || "").trim(),
-      yearsOfExperience: String(extracted.yearsOfExperience || "").trim(),
+      yearsOfExperience: at(yearsOfExperienceIdx, yearsOfExperienceRaw),
     }));
 
     if (targetRolesBase.length) {
@@ -1455,7 +1492,7 @@ export default function AtsCvBuilder({ accessCode }) {
         schoolChoice: e.uniMatch.choice,
         schoolCustom: e.uniMatch.choice === OTHER ? at(eduSlots[i].uniIdx, e.uniMatch.custom) : e.uniMatch.custom,
         year: e.year,
-        detail: e.detail,
+        detail: at(eduSlots[i].detailIdx, e.detail),
         gradProject: e.gradProject,
       })));
     }
@@ -1621,12 +1658,8 @@ export default function AtsCvBuilder({ accessCode }) {
     methodChangeWarningCancel: "Cancel",
     arabicBlockedNotice: "This field must be entered in English only for the English CV (no translation).",
     englishBlockedNotice: "This field must be entered in Arabic only for the Arabic CV (no translation).",
-    langMismatchTitle: "Language mismatch",
-    langMismatchBody: (selectedLabel, uploadedLabel) => `You chose ${selectedLabel} but uploaded a CV written in ${uploadedLabel}. We'll do our best to translate it, but please review the result carefully — especially names and technical terms.`,
-    langMismatchBack: "Go back and edit",
-    langMismatchContinue: "Continue",
     translatingCv: "Translating your CV...",
-    translationReviewNotice: "We automatically translated your CV — please carefully review names, terms, and organizations, and make sure they're correct before continuing.",
+    preparingCv: "Preparing your CV...",
   } : {
     city: "المدينة", experienceHeading: "الخبرات العملية والتدريب", expCard: "خبرة",
     jobTitle: "المسمى الوظيفي", employer: "جهة العمل", from: "من", to: "إلى", month: "الشهر", year: "السنة",
@@ -1683,12 +1716,8 @@ export default function AtsCvBuilder({ accessCode }) {
     methodChangeWarningCancel: "إلغاء",
     arabicBlockedNotice: "يجب إدخال هذا الحقل بالأحرف الإنجليزية فقط للسيرة الإنجليزية (بدون ترجمة).",
     englishBlockedNotice: "يجب إدخال هذا الحقل بالأحرف العربية فقط للسيرة العربية (بدون ترجمة).",
-    langMismatchTitle: "اختلاف في اللغة",
-    langMismatchBody: (selectedLabel, uploadedLabel) => `لقد اخترت اللغة ${selectedLabel} ورفعت سيرة باللغة ${uploadedLabel}. سنبذل قصارى جهدنا في الترجمة، لكن يُرجى مراجعة النتيجة بعناية — خاصة الأسماء والمصطلحات التقنية.`,
-    langMismatchBack: "الرجوع للتعديل",
-    langMismatchContinue: "المتابعة",
     translatingCv: "جارٍ ترجمة سيرتك الذاتية...",
-    translationReviewNotice: "قمنا بترجمة سيرتك تلقائيًا — يُرجى مراجعة الأسماء والمصطلحات والجهات بعناية والتأكد من صحتها قبل المتابعة.",
+    preparingCv: "جارٍ تجهيز سيرتك...",
   };
 
   // ── Validation (gentle, non-blocking) ──
@@ -2117,10 +2146,18 @@ export default function AtsCvBuilder({ accessCode }) {
     setStep(step + 1);
   }
 
-  function proceedToPreview() {
+  async function proceedToPreview() {
     setPreview(true);
-    if (!aiSummaryGenerated) generateAiSummary();
-    if (!itemsEnhanced) generateAiEnhancements();
+    const tasks = [];
+    if (!aiSummaryGenerated) tasks.push(generateAiSummary());
+    if (!itemsEnhanced) tasks.push(generateAiEnhancements());
+    if (!tasks.length) return; // already generated earlier this session — nothing to wait on
+    setPreviewGenerating(true);
+    try {
+      await Promise.allSettled(tasks);
+    } finally {
+      setPreviewGenerating(false);
+    }
   }
 
   // ─────────────────── LANGUAGE (chosen first) ───────────────────
@@ -2236,25 +2273,34 @@ export default function AtsCvBuilder({ accessCode }) {
             style={{ position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 100 }}
           >
             <div
-              dir={cvDir}
               role="dialog"
               aria-modal="true"
               aria-labelledby="lang-mismatch-title"
               aria-describedby="lang-mismatch-desc"
-              style={{ width: "100%", maxWidth: 400, background: THEME.card, borderRadius: 14, padding: 24, boxShadow: "0 12px 40px rgba(18,41,63,.4)" }}
+              style={{ width: "100%", maxWidth: 420, background: THEME.card, borderRadius: 14, padding: 24, boxShadow: "0 12px 40px rgba(18,41,63,.4)" }}
             >
-              <div id="lang-mismatch-title" style={{ fontSize: 16.5, fontWeight: 800, color: THEME.primary, marginBottom: 10 }}>
-                {L.langMismatchTitle}
+              {/* Shown bilingually (EN + AR together), always, regardless
+                  of the selected CV language — see langMismatchBodyBilingual. */}
+              <div id="lang-mismatch-title" dir="ltr" style={{ fontSize: 16.5, fontWeight: 800, color: THEME.primary, marginBottom: 10, textAlign: "start" }}>
+                Language mismatch <span dir="rtl" style={{ opacity: 0.75 }}>/ اختلاف في اللغة</span>
               </div>
               <div id="lang-mismatch-desc" style={{ fontSize: 13.5, color: THEME.text, lineHeight: 1.9, marginBottom: 20 }}>
-                {L.langMismatchBody(langDisplayName(cvLang), langDisplayName(detectedCvLang))}
+                {(() => {
+                  const body = langMismatchBodyBilingual(cvLang, detectedCvLang);
+                  return (
+                    <>
+                      <p dir="ltr" style={{ margin: 0, marginBottom: 12, textAlign: "start" }}>{body.en}</p>
+                      <p dir="rtl" style={{ margin: 0, textAlign: "start" }}>{body.ar}</p>
+                    </>
+                  );
+                })()}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <button type="button" onClick={continueLangMismatch} style={{ ...btnPrimary, width: "100%" }}>
-                  {L.langMismatchContinue}
+                <button type="button" onClick={continueLangMismatch} style={{ ...btnPrimary, width: "100%", justifyContent: "center" }}>
+                  Continue / المتابعة
                 </button>
                 <button type="button" onClick={cancelLangMismatch} style={{ ...btnGhost, width: "100%", justifyContent: "center" }}>
-                  {L.langMismatchBack}
+                  Go back and edit / الرجوع للتعديل
                 </button>
               </div>
             </div>
@@ -2270,6 +2316,27 @@ export default function AtsCvBuilder({ accessCode }) {
   if (preview) {
     return (
       <div dir={cvDir} style={{ background: C.paper, minHeight: "100vh", fontFamily: "'Segoe UI', Tahoma, sans-serif" }}>
+        {/* Blocking loading overlay — covers the preview from the moment
+            proceedToPreview triggers generation until it settles (success
+            or graceful fallback), so the applicant never sees a flash of
+            unpolished/original text quietly swap to the AI version. */}
+        {previewGenerating && (
+          <div
+            role="alert"
+            aria-busy="true"
+            className="no-print"
+            style={{ position: "fixed", inset: 0, background: "rgba(18,41,63,.72)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 200 }}
+          >
+            <div
+              dir={cvDir}
+              style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, background: THEME.card, borderRadius: 14, padding: "28px 36px", boxShadow: "0 12px 40px rgba(18,41,63,.4)" }}
+            >
+              <Loader2 size={28} className="spin" color={THEME.primary} />
+              <div style={{ fontSize: 14.5, fontWeight: 700, color: THEME.primary }}>{L.preparingCv}</div>
+            </div>
+          </div>
+        )}
+
         {/* toolbar - hidden on print */}
         <div dir="rtl" className="no-print" style={{ background: C.ink, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 10 }}>
           <button onClick={() => setPreview(false)} style={btnGhostLight}>
@@ -2901,7 +2968,12 @@ export default function AtsCvBuilder({ accessCode }) {
               }}
             >
               <span style={{ flexShrink: 0 }}>⚠️</span>
-              <span>{L.translationReviewNotice}</span>
+              {/* Shown bilingually (EN + AR together), always — see
+                  TRANSLATION_REVIEW_NOTICE_BILINGUAL. */}
+              <span>
+                <span dir="ltr" style={{ display: "block" }}>{TRANSLATION_REVIEW_NOTICE_BILINGUAL.en}</span>
+                <span dir="rtl" style={{ display: "block", marginTop: 4 }}>{TRANSLATION_REVIEW_NOTICE_BILINGUAL.ar}</span>
+              </span>
             </div>
           )}
 

@@ -27,17 +27,18 @@ const MAX_TERMS = 120;
 // guess at content that isn't already there.
 function buildSystemPrompt(lang) {
   const languageName = lang === "en" ? "English" : "Arabic";
-  return `You are translating short CV data values (job titles, employer names, skill names, course/certification names, and similar short labels — never full sentences) into ${languageName}, for an applicant whose CV was uploaded in a different language than the one they chose for their final CV.
+  return `You are translating short CV data values (job titles, employer names, skill names, course/certification names, years-of-experience phrases, GPA/grade descriptions, and similar short labels — never full sentences) into ${languageName}, for an applicant whose CV was uploaded in a different language than the one they chose for their final CV.
 
 Rules:
 - Translate ONLY — never invent, embellish, or add any fact, qualifier, or detail that isn't already in the source value.
+- Every word of the output must be in ${languageName}. A value that mixes a number with connective/descriptive words in the source language (e.g. "أكثر من ثماني سنوات", "4.5 من 5", "5+ سنوات خبرة") must come back with ALL of those words translated too (e.g. "More than eight years", "4.5 of 5", "5+ years experience") — never leave a connective word, unit, or short phrase behind in the source language just because a number sits next to it.
 - Do NOT translate literally where it would be wrong to do so. Keep the ORIGINAL, unchanged form for:
   - Technical terms, tools, and software names (e.g. Power BI, Python, SQL, Excel, SAP, Photoshop, AutoCAD) — always keep these in their original Latin form, even inside an Arabic translation.
   - Brand and company names that are conventionally written in English (e.g. Google, Microsoft) — keep as-is.
-  - Emails, URLs, LinkedIn handles, and numbers — leave completely unchanged.
+  - Emails, URLs, LinkedIn handles, and bare numbers with nothing else to translate — leave completely unchanged.
   - A well-known Saudi/Arab organization's own conventional Arabic name may be used when translating into Arabic (e.g. "King Saud University" -> "جامعة الملك سعود"); if you are not confident of the correct proper-noun form, keep the original text unchanged rather than guessing.
 - DO translate genuine generic role/skill/field terms into natural, professional ${languageName} (e.g. "Project Manager" -> "مدير مشاريع", "Teamwork" -> "العمل الجماعي").
-- If a value is already entirely in ${languageName}, or has nothing translatable in it (e.g. it's just a number or an email), return it completely unchanged.
+- If a value is already entirely in ${languageName}, or has nothing translatable in it (e.g. it's just a bare number or an email), return it completely unchanged.
 - Return the results in the same order, one per line, no numbering, no headings, no preamble, no explanation. Every input line must produce exactly one output line, even if unchanged.`;
 }
 
@@ -62,7 +63,11 @@ async function requestTranslation(client, lang, numbered, expectedCount) {
     .filter(Boolean)
     // Defensive: strip any leading "1. " / "1)" the model adds despite
     // being told not to, so a stray numbering artifact never leaks in.
-    .map((l) => l.replace(/^\d+[.).]\s*/, ""));
+    // Requires at least one space after the punctuation (\s+, not \s*) —
+    // otherwise this also matches (and corrupts) a legitimate value that
+    // itself starts with a decimal number, e.g. "4.5 of 5" -> "5 of 5",
+    // since "\d+[.).]" alone already matches the "4." in "4.5".
+    .map((l) => l.replace(/^\d+[.).]\s+/, ""));
 
   if (lines.length !== expectedCount) {
     throw new Error(`Expected ${expectedCount} translated lines, got ${lines.length}`);

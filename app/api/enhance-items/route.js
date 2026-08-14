@@ -54,7 +54,12 @@ async function requestEnhancement(client, lang, numbered, expectedCount) {
     .filter(Boolean)
     // Defensive: strip any leading "1. " / "1)" the model adds despite
     // being told not to, so a stray numbering artifact never leaks in.
-    .map((l) => l.replace(/^\d+[.).]\s*/, ""));
+    // Requires at least one space after the punctuation (\s+, not \s*) —
+    // otherwise this also matches (and corrupts) a legitimate polished
+    // line that itself starts with a decimal number, e.g. a bullet like
+    // "4.5 million SAR budget managed" -> "5 million SAR budget managed",
+    // since "\d+[.).]" alone already matches the "4." in "4.5".
+    .map((l) => l.replace(/^\d+[.).]\s+/, ""));
 
   if (lines.length !== expectedCount) {
     throw new Error(`Expected ${expectedCount} enhanced lines, got ${lines.length}`);
