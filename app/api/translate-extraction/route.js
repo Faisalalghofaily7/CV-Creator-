@@ -4,20 +4,40 @@ import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
 import { retryWithBackoff } from "../../../lib/aiRetry";
 
 export const runtime = "nodejs";
-// Comfortably above the bounded retry window plus headroom for an
-// in-flight attempt that was still running when the window closed.
-export const maxDuration = 75;
+// Chunks run concurrently (see CHUNK_SIZE below), so total wall time is
+// bounded by the slowest chunk's own retry window, not the sum of all of
+// them — this just needs headroom above one chunk's window plus an
+// in-flight attempt still running when that window closed.
+export const maxDuration = 60;
 
 // Per-attempt timeout, not the total retry budget — see enhance-items'
 // route for the same convention (maxRetries: 0 disables the SDK's own
 // retry so retryWithBackoff has exclusive, observable control).
 const PER_ATTEMPT_TIMEOUT_MS = 20_000;
+// Bounded-retry window per CHUNK (see CHUNK_SIZE) — smaller than the
+// other routes' default ~40s since a chunk's own response is short and
+// should complete quickly; still enough room for 2-3 attempts.
+const CHUNK_WINDOW_MS = 30_000;
 
 // This route only ever handles the short, structured "leftover" fields
 // from a CV upload (job title, employer, an unmatched dropdown's custom
 // text, a skill tag, a course/certification name...) — never a whole
 // paragraph — so this cap is generous on purpose.
 const MAX_TERMS = 120;
+
+// A real, detailed CV can easily produce 30-40+ of these leftover values
+// (several experiences' titles/employers, unmatched skills, course and
+// certification names...) once translation was extended to cover all of
+// them. Sending that many in ONE request risks the model running out of
+// its max_tokens budget partway through — observed in production as the
+// response coming back with far fewer lines than requested (e.g. "Expected
+// 38 translated lines, got 3"), which fails the whole batch and falls back
+// to leaving EVERY item untranslated, even ones that would have succeeded
+// on their own. Splitting into small chunks, each retried independently
+// and run in parallel, means a struggling chunk only costs its own items —
+// not the whole CV's translation — and each chunk's response is short
+// enough that max_tokens is never remotely in question.
+const CHUNK_SIZE = 15;
 
 // Used only when a CV was uploaded in one language but the applicant
 // selected the other as their CV's output language (see the mismatch
@@ -106,39 +126,63 @@ export async function POST(request) {
     return NextResponse.json({ terms });
   }
 
-  const numbered = nonEmptyTerms.map((it, i) => `${i + 1}. ${it}`).join("\n");
-
   const client = getAnthropicClient();
-  const result = await retryWithBackoff(
-    () => requestTranslation(client, lang, numbered, nonEmptyTerms.length),
-    { logTag: "[TRANSLATE-EXTRACTION-RETRY]" }
-  );
 
-  if (result.ok) {
-    const merged = [...terms];
-    result.result.forEach((translated, i) => {
-      merged[nonEmptyIndexes[i]] = translated;
+  // Split into small chunks (see CHUNK_SIZE) and retry each one
+  // independently, in parallel — a chunk that ultimately fails falls back
+  // to its own original terms without dragging down chunks that succeeded.
+  const chunks = [];
+  for (let start = 0; start < nonEmptyTerms.length; start += CHUNK_SIZE) {
+    chunks.push({
+      terms: nonEmptyTerms.slice(start, start + CHUNK_SIZE),
+      indexes: nonEmptyIndexes.slice(start, start + CHUNK_SIZE),
     });
-    return NextResponse.json({ terms: merged });
   }
 
-  console.error("[TRANSLATE-EXTRACTION-ERROR]", {
-    message: result.error?.message,
-    name: result.error?.name,
-    stack: result.error?.stack,
-    attempts: result.attempts,
-    stoppedEarly: !!result.stoppedEarly,
-    ...(result.error instanceof APIError && {
-      anthropicStatus: result.error.status,
-      anthropicErrorType: result.error.type,
-      anthropicResponseBody: result.error.error,
-    }),
+  const chunkResults = await Promise.all(
+    chunks.map((chunk, chunkIdx) => {
+      const numbered = chunk.terms.map((it, i) => `${i + 1}. ${it}`).join("\n");
+      return retryWithBackoff(
+        () => requestTranslation(client, lang, numbered, chunk.terms.length),
+        { logTag: `[TRANSLATE-EXTRACTION-RETRY chunk ${chunkIdx + 1}/${chunks.length}]`, windowMs: CHUNK_WINDOW_MS }
+      );
+    })
+  );
+
+  const merged = [...terms];
+  chunkResults.forEach((result, chunkIdx) => {
+    const chunk = chunks[chunkIdx];
+    if (result.ok) {
+      result.result.forEach((translated, i) => {
+        merged[chunk.indexes[i]] = translated;
+      });
+      return;
+    }
+    console.error(`[TRANSLATE-EXTRACTION-ERROR] chunk ${chunkIdx + 1}/${chunks.length}`, {
+      message: result.error?.message,
+      name: result.error?.name,
+      stack: result.error?.stack,
+      attempts: result.attempts,
+      stoppedEarly: !!result.stoppedEarly,
+      ...(result.error instanceof APIError && {
+        anthropicStatus: result.error.status,
+        anthropicErrorType: result.error.type,
+        anthropicResponseBody: result.error.error,
+      }),
+    });
+    // Never a 500 for a best-effort translation, and never a garbled/
+    // partial chunk either — this chunk's original (untranslated) terms
+    // are already sitting in `merged` (seeded from `terms` above), so
+    // leaving them as-is is the fallback. The review-notice card still
+    // applies either way, since a mismatch-triggered translation was
+    // attempted for the CV as a whole.
   });
 
-  // Never a 500 for a best-effort translation, and never a garbled/partial
-  // array either — the caller already has the original (untranslated)
-  // values and falls back to those verbatim when this response has no
-  // usable `terms` array. The review-notice card still applies either way,
-  // since a mismatch-triggered translation was attempted.
-  return NextResponse.json({ error: "تعذّر ترجمة بعض بيانات السيرة الذاتية تلقائياً." });
+  if (chunkResults.every((r) => !r.ok)) {
+    // Every chunk failed — surface the same best-effort error the caller
+    // already handles by falling back to the untranslated values it sent.
+    return NextResponse.json({ error: "تعذّر ترجمة بعض بيانات السيرة الذاتية تلقائياً." });
+  }
+
+  return NextResponse.json({ terms: merged });
 }
