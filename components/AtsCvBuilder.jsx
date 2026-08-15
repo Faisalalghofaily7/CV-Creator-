@@ -1755,7 +1755,7 @@ export default function AtsCvBuilder({ accessCode }) {
         setSourceChosen(true);
       }
     } catch (err) {
-      setUploadCvError(err.message || "تعذّر استخراج البيانات من الملف. يمكنك المتابعة وتعبئة النموذج يدوياً.");
+      setUploadCvError(err.message || "تعذّر استخراج البيانات من الملف. أعد المحاولة، أو يمكنك المتابعة وتعبئة النموذج يدوياً.");
     } finally {
       setUploadingCv(false);
     }

@@ -162,7 +162,7 @@ export async function POST(request) {
         rawPreview: extractResult.error?.rawPreview,
         stopReason: extractResult.error?.stopReason,
       });
-      return NextResponse.json({ error: "تعذّر قراءة بيانات السيرة الذاتية تلقائياً من الملف. يمكنك المتابعة وتعبئة النموذج يدوياً." }, { status: 502 });
+      return NextResponse.json({ error: "تعذّر قراءة بيانات السيرة الذاتية تلقائياً من الملف. أعد المحاولة، أو يمكنك المتابعة وتعبئة النموذج يدوياً." }, { status: 502 });
     }
 
     return NextResponse.json({ data: extractResult.result });
