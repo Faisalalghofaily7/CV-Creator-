@@ -6,6 +6,7 @@ import { LIFECYCLE_STATUSES, MANUAL_LIFECYCLE_STATUSES, LIFECYCLE_STATUS_LABELS,
 import { GENERATION_SOURCE_LABELS, GENERATION_SOURCE_COLORS, creatorLabel } from "../lib/generationSource";
 import { STAFF_TYPES, STAFF_TYPE_LABELS, PACKAGE_OPTIONS, isValidStaffEmail } from "../lib/staffAccounts";
 import { LINKEDIN_ORDER_STATUSES, LINKEDIN_ORDER_STATUS_LABELS, LINKEDIN_ORDER_STATUS_COLORS, parseCompositeOrderId } from "../lib/linkedinOrders";
+import { normalizePhoneForWhatsapp } from "../lib/whatsappLink";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec", soft: "#e8eef4" };
 
@@ -639,7 +640,7 @@ export default function AdminCodes({ role, staffType }) {
                           style={{ ...inputStyle, padding: "6px 8px", fontSize: 12.5 }}
                         />
                       </td>
-                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_phone ? <CopyField value={c.applicant_phone} /> : "—"}</td>
+                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.applicant_phone ? <CopyField value={c.applicant_phone} whatsapp /> : "—"}</td>
                       <td style={{ ...tdStyle, fontSize: 12.5 }}>{c.requested_package ? <CopyField value={c.requested_package} /> : "—"}</td>
                       <td style={tdStyle}>
                         <span style={{ display: "inline-block", background: sourceColors.bg, color: sourceColors.fg, fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 9px", whiteSpace: "nowrap" }}>
@@ -882,7 +883,7 @@ export default function AdminCodes({ role, staffType }) {
 
                     <div style={fieldGrid}>
                       <Field icon={Mail} label="البريد الإلكتروني" value={v.applicant_email} copyable />
-                      <Field icon={Phone} label="رقم الجوال" value={v.applicant_phone} copyable />
+                      <Field icon={Phone} label="رقم الجوال" value={v.applicant_phone} copyable whatsapp />
                       <Field icon={MapPin} label="المدينة" value={v.applicant_city} copyable />
                       <Field icon={Target} label="المدن المستهدفة" value={v.applicant_target_cities} copyable />
                       <Field icon={Hash} label="رقم طلب سلة" value={v.salla_order_number} copyable />
@@ -1201,7 +1202,7 @@ function LinkedinPanel({ orders, loading, error, statusFilter, setStatusFilter, 
 
                 <div style={fieldGrid}>
                   <Field icon={User} label="اسم العميل" value={o.applicantName} copyable />
-                  <Field icon={Phone} label="رقم الجوال" value={o.applicantPhone} copyable />
+                  <Field icon={Phone} label="رقم الجوال" value={o.applicantPhone} copyable whatsapp />
                   <Field icon={Hash} label="رقم طلب سلة" value={o.sallaOrderNumber} copyable />
                   <Field icon={Sparkles} label="الخدمة المطلوبة" value={o.requestedPackage} copyable />
                   {o.applicantEmail && <Field icon={Mail} label="البريد الإلكتروني" value={o.applicantEmail} copyable />}
@@ -1330,14 +1331,14 @@ function NotificationStatusLine({ status, email }) {
   );
 }
 
-function Field({ icon: Icon, label, value, mono, copyable }) {
+function Field({ icon: Icon, label, value, mono, copyable, whatsapp }) {
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.slate, fontWeight: 600, marginBottom: 2 }}>
         <Icon size={12} /> {label}
       </div>
       <div style={{ fontSize: 13, color: C.ink, fontFamily: mono ? "monospace" : "inherit", overflowWrap: "break-word" }}>
-        {copyable && value ? <CopyField value={value} mono={mono} /> : value || "—"}
+        {copyable && value ? <CopyField value={value} mono={mono} whatsapp={whatsapp} /> : value || "—"}
       </div>
     </div>
   );
@@ -1345,8 +1346,10 @@ function Field({ icon: Icon, label, value, mono, copyable }) {
 
 // Small "value + copy button" pair used for every displayed customer field
 // across the admin archive, codes table, and LinkedIn panel — copies just
-// that one value with a brief "تم النسخ" confirmation.
-function CopyField({ value, mono }) {
+// that one value with a brief "تم النسخ" confirmation. `whatsapp` adds a
+// small WhatsApp-chat icon beside phone-number fields, in addition to (not
+// instead of) the copy button.
+function CopyField({ value, mono, whatsapp }) {
   const [copied, setCopied] = useState(false);
   if (value === null || value === undefined || value === "") return <span>—</span>;
   return (
@@ -1363,7 +1366,38 @@ function CopyField({ value, mono }) {
       >
         {copied ? <Check size={12} color="#1a3a5c" /> : <Copy size={12} />}
       </button>
+      {whatsapp && <WhatsappChatLink phone={value} />}
     </span>
+  );
+}
+
+// Small recognizable WhatsApp glyph — lucide-react has no brand icons, so
+// this is a minimal inline SVG rather than pulling in a whole icon-set
+// dependency for one logo.
+function WhatsappIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="#25D366" aria-hidden="true">
+      <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.9-4.45 9.9-9.91C21.95 6.45 17.5 2 12.04 2Zm5.78 14.02c-.24.68-1.4 1.3-1.93 1.38-.49.08-1.1.11-1.78-.11-.41-.13-.94-.3-1.62-.6-2.86-1.24-4.72-4.12-4.86-4.31-.14-.19-1.16-1.55-1.16-2.95 0-1.4.73-2.09.99-2.38.26-.28.57-.35.76-.35h.55c.18 0 .41-.07.64.49.24.57.81 1.98.88 2.12.07.14.12.31.02.5-.09.19-.14.31-.28.48-.14.16-.29.36-.41.48-.14.14-.28.29-.12.57.16.28.71 1.18 1.53 1.91 1.05.94 1.94 1.24 2.22 1.38.28.14.44.12.61-.07.16-.19.7-.81.89-1.09.19-.28.38-.23.63-.14.26.09 1.65.78 1.93.92.28.14.47.21.54.33.07.12.07.68-.17 1.36Z" />
+    </svg>
+  );
+}
+
+// Opens a WhatsApp chat with this phone number in a new tab (the WhatsApp
+// app itself, on mobile). Renders nothing if the value doesn't normalize
+// to a usable number, so it never shows a dead/broken link.
+function WhatsappChatLink({ phone }) {
+  const normalized = normalizePhoneForWhatsapp(phone);
+  if (!normalized) return null;
+  return (
+    <a
+      href={`https://wa.me/${normalized}`}
+      target="_blank"
+      rel="noreferrer"
+      style={{ display: "inline-flex", alignItems: "center", padding: 2, lineHeight: 0 }}
+      title="فتح محادثة واتساب"
+    >
+      <WhatsappIcon size={14} />
+    </a>
   );
 }
 
