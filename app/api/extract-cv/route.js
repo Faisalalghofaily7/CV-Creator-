@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import mammoth from "mammoth";
+// The internal path avoids pdf-parse's top-level index.js, which runs a
+// debug self-test against a bundled sample file when required in certain
+// module contexts (a known issue with this package) — importing the
+// library module directly skips that entirely.
+import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
 import { retryWithBackoff } from "../../../lib/aiRetry";
 
@@ -36,6 +41,12 @@ const RETRY_WINDOW_MS = 90_000;
 // well under Vercel's inbound request-body limit (~4.5MB on Hobby) and
 // Claude's own document-input limits.
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
+
+// Below this, treat the PDF as having no usable text layer (a scan/image)
+// and fall back to document vision instead — a real CV's text layer runs
+// into the thousands of characters, so this only catches the genuine
+// scanned-PDF case, not a short-but-real CV.
+const MIN_PDF_TEXT_CHARS = 200;
 
 // Extraction only — never translates or rephrases (that happens later, at
 // preview time, through the same AI-enhancement pipeline every other CV
@@ -105,10 +116,31 @@ export async function POST(request) {
 
     let messageContent;
     if (isPdf) {
-      messageContent = [
-        { type: "document", source: { type: "base64", media_type: "application/pdf", data: buffer.toString("base64") } },
-        { type: "text", text: "Extract this CV's data as instructed in the system prompt." },
-      ];
+      // Most CVs are text-layer PDFs (exported from Word, Canva, etc.), not
+      // scans — extracting that text locally and sending it as plain text
+      // (same as the .docx path below) is both far faster and more reliable
+      // than making Claude run its own page-image vision pipeline on every
+      // upload, which was the actual cause of production timeouts: a request
+      // routed through vision processing is much slower and more variable in
+      // latency than a plain-text request, even for a small file. Vision is
+      // kept as a fallback for the genuine minority case — a scanned/
+      // image-only PDF with no extractable text layer.
+      let pdfText = "";
+      try {
+        const parsed = await pdfParse(buffer);
+        pdfText = (parsed.text || "").trim();
+      } catch (err) {
+        console.warn("[EXTRACT-CV] Local PDF text extraction failed, falling back to document vision:", err?.message);
+      }
+
+      if (pdfText.length >= MIN_PDF_TEXT_CHARS) {
+        messageContent = [{ type: "text", text: `Extract this CV's data as instructed in the system prompt.\n\n---\n${pdfText}` }];
+      } else {
+        messageContent = [
+          { type: "document", source: { type: "base64", media_type: "application/pdf", data: buffer.toString("base64") } },
+          { type: "text", text: "Extract this CV's data as instructed in the system prompt." },
+        ];
+      }
     } else {
       let text;
       try {
