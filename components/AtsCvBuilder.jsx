@@ -508,13 +508,11 @@ export default function AtsCvBuilder({ accessCode }) {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportCompleted, setExportCompleted] = useState(false);
   const [exportError, setExportError] = useState("");
-  // Word (.docx) export — an independent, additive extra format alongside
-  // the PDF above. Its own state on purpose: downloading a Word copy never
-  // touches `downloading`/`exportError`/`exportCompleted` (the PDF's own
-  // single-use-completion flow, untouched by this feature), so the two
-  // downloads can happen in any order/combination without interfering.
-  const [downloadingDocx, setDownloadingDocx] = useState(false);
-  const [docxError, setDocxError] = useState("");
+  // A single confirm exports BOTH the PDF and a Word (.docx) copy. Only the
+  // PDF's success gates completion (see downloadCvFiles) — if Word fails
+  // afterward, the order is still complete and the applicant is just told
+  // the Word copy wasn't available, on the thank-you screen below.
+  const [wordUnavailable, setWordUnavailable] = useState(false);
   // AI-generated professional summary: only auto-generated once per session
   // (aiSummaryGenerated guards against silently overwriting a manual edit
   // the next time the user revisits the preview).
@@ -1361,7 +1359,7 @@ export default function AtsCvBuilder({ accessCode }) {
   // straight to a later section via the step menu (never touching "Next"
   // on step 0) bypassed it entirely, letting an applicant reach Preview/
   // Export with e.g. no name at all. Called at Preview and Export time
-  // (see proceedToPreview / downloadPDF) so the same requirements hold
+  // (see proceedToPreview / downloadCvFiles) so the same requirements hold
   // regardless of navigation path.
   function findMissingRequiredFields() {
     const issues = [];
@@ -2043,7 +2041,14 @@ export default function AtsCvBuilder({ accessCode }) {
     })
     .join(" | ");
 
-  async function downloadPDF() {
+  // Single confirm exports both files. The PDF is the critical/blocking
+  // half — its success is still the one thing that marks the session
+  // complete (matching the single-use access code's server-side
+  // consumption, which only the PDF route triggers). Word is generated
+  // right after, best-effort: if it fails, the order is already complete
+  // and the applicant just sees a graceful note on the thank-you screen
+  // instead of being blocked or shown an error.
+  async function downloadCvFiles() {
     // Defense-in-depth alongside proceedToPreview's own check — nothing on
     // the preview screen lets these specific fields (name/phone/target
     // roles/dates/education) change, but exporting must never rely on
@@ -2060,49 +2065,57 @@ export default function AtsCvBuilder({ accessCode }) {
     }
     setDownloading(true);
     setExportError("");
+    setWordUnavailable(false);
+
+    const payload = {
+      form: {
+        name: form.name,
+        email: form.email,
+        phone: cvPhoneValue,
+        city: cityValue,
+        // Collected for future AI/matching features, but neither export
+        // template renders these into the CV output.
+        targetRoles: targetRoles.join(sep),
+        // Staff-only, never on either export (see lib/cvArchive.js /
+        // lib/cvHtmlTemplate.js / lib/cvDocxTemplate.js — none render these).
+        targetCities: targetCitiesStr,
+        internalNotes,
+        yearsOfExperience: form.yearsOfExperience,
+        linkedin: form.linkedin,
+        summary: form.summary,
+        achievements: displayAchievementsStr,
+        languages: languagesStr,
+      },
+      experiences: displayExperiences,
+      education: displayEducation,
+      courses: displayCourses,
+      certifications: displayCertifications,
+      customSections: displayCustomSections,
+      techSkills: techSkillsStr,
+      softSkills: softSkillsStr,
+      lang: cvLang,
+      accessCode,
+    };
+    const safeName = (form.name || "CV").replace(/\s+/g, "_");
+
     // iOS Safari doesn't support forced downloads (the `download` attribute
     // is ignored) and revoking a blob: URL right after triggering it — as a
     // desktop-style anchor click normally does — races Safari's own async
     // handling of that URL and surfaces as "WebKitBlobResource error 1".
-    // The reliable path on iOS is to hand the PDF to Safari's built-in
+    // The reliable path on iOS is to hand each file to Safari's built-in
     // viewer (the user saves it from there via the Share sheet) in a tab
-    // opened synchronously *before* the network request, so it isn't
-    // blocked as a popup once we're past the awaited fetch below.
+    // opened synchronously *before* the network request, so neither is
+    // blocked as a popup once we're past the awaited fetches below — both
+    // tabs must be opened up front, in the same click gesture.
     const isIOS = typeof navigator !== "undefined" && (/iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
-    const iosTab = isIOS ? window.open("", "_blank") : null;
+    const iosTabPdf = isIOS ? window.open("", "_blank") : null;
+    const iosTabDocx = isIOS ? window.open("", "_blank") : null;
+
     try {
       const res = await fetch("/api/generate-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          form: {
-            name: form.name,
-            email: form.email,
-            phone: cvPhoneValue,
-            city: cityValue,
-            // Collected for future AI/matching features, but the PDF
-            // template no longer renders these into the CV output.
-            targetRoles: targetRoles.join(sep),
-            // Staff-only, never on the PDF (see lib/cvArchive.js /
-            // lib/cvHtmlTemplate.js — neither one renders these).
-            targetCities: targetCitiesStr,
-            internalNotes,
-            yearsOfExperience: form.yearsOfExperience,
-            linkedin: form.linkedin,
-            summary: form.summary,
-            achievements: displayAchievementsStr,
-            languages: languagesStr,
-          },
-          experiences: displayExperiences,
-          education: displayEducation,
-          courses: displayCourses,
-          certifications: displayCertifications,
-          customSections: displayCustomSections,
-          techSkills: techSkillsStr,
-          softSkills: softSkillsStr,
-          lang: cvLang,
-          accessCode,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -2112,10 +2125,9 @@ export default function AtsCvBuilder({ accessCode }) {
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
 
-      if (isIOS && iosTab) {
-        iosTab.location.href = url;
+      if (isIOS && iosTabPdf) {
+        iosTabPdf.location.href = url;
       } else {
-        const safeName = (form.name || "CV").replace(/\s+/g, "_");
         const a = document.createElement("a");
         a.href = url;
         a.download = `${safeName}_CV.pdf`;
@@ -2127,81 +2139,38 @@ export default function AtsCvBuilder({ accessCode }) {
       // freeing it — revoking too early is what causes the iOS Safari error.
       setTimeout(() => URL.revokeObjectURL(url), 30000);
 
-      // Only reached on a successful download — this is the single place
-      // the session gets marked complete, per the single-use access code.
+      // Only reached on a successful PDF download — this is the single
+      // place the session gets marked complete, per the single-use access
+      // code. Word is attempted next but can no longer affect this.
       setShowExportModal(false);
       setExportCompleted(true);
       clearProgress();
     } catch (e) {
-      if (iosTab) iosTab.close();
+      if (iosTabPdf) iosTabPdf.close();
+      if (iosTabDocx) iosTabDocx.close();
       setExportError(e.message && e.message !== "PDF generation failed" ? e.message : "تعذّر إنشاء الملف. تحقّق من اتصالك وحاول مرة أخرى.");
-    } finally {
       setDownloading(false);
-    }
-  }
-
-  // Independent Word (.docx) download — deliberately NOT a shared helper
-  // with downloadPDF above (its payload-building block is duplicated
-  // here on purpose) so this feature can never require touching the PDF
-  // download path. Unlike downloadPDF, a successful Word download does
-  // NOT close the export modal or mark the session complete — that stays
-  // tied exclusively to the PDF, so the customer can still also download
-  // the PDF (or Word again) afterward, matching "either or both".
-  async function downloadDocx() {
-    const issues = findMissingRequiredFields();
-    if (issues.length) {
-      setShowExportModal(false);
-      setMissingFieldIssues(issues);
-      setShowMissingFieldsModal(true);
-      setPreview(false);
       return;
     }
-    setDownloadingDocx(true);
-    setDocxError("");
-    const isIOS = typeof navigator !== "undefined" && (/iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
-    const iosTab = isIOS ? window.open("", "_blank") : null;
+
     try {
+      // A short gap before triggering the second download — firing two
+      // download prompts back-to-back risks the browser's "this site is
+      // trying to download multiple files" block on the second one.
+      await new Promise((resolve) => setTimeout(resolve, 600));
       const res = await fetch("/api/generate-docx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          form: {
-            name: form.name,
-            email: form.email,
-            phone: cvPhoneValue,
-            city: cityValue,
-            targetRoles: targetRoles.join(sep),
-            targetCities: targetCitiesStr,
-            internalNotes,
-            yearsOfExperience: form.yearsOfExperience,
-            linkedin: form.linkedin,
-            summary: form.summary,
-            achievements: displayAchievementsStr,
-            languages: languagesStr,
-          },
-          experiences: displayExperiences,
-          education: displayEducation,
-          courses: displayCourses,
-          certifications: displayCertifications,
-          customSections: displayCustomSections,
-          techSkills: techSkillsStr,
-          softSkills: softSkillsStr,
-          lang: cvLang,
-          accessCode,
-        }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Word generation failed");
-      }
+      if (!res.ok) throw new Error("Word generation failed");
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
 
-      if (isIOS && iosTab) {
-        iosTab.location.href = url;
+      if (isIOS && iosTabDocx) {
+        iosTabDocx.location.href = url;
       } else {
-        const safeName = (form.name || "CV").replace(/\s+/g, "_");
         const a = document.createElement("a");
         a.href = url;
         a.download = `${safeName}_CV.docx`;
@@ -2211,10 +2180,10 @@ export default function AtsCvBuilder({ accessCode }) {
       }
       setTimeout(() => URL.revokeObjectURL(url), 30000);
     } catch (e) {
-      if (iosTab) iosTab.close();
-      setDocxError(e.message && e.message !== "Word generation failed" ? e.message : "تعذّر إنشاء ملف Word. يمكنك تحميل PDF بدلاً من ذلك.");
+      if (iosTabDocx) iosTabDocx.close();
+      setWordUnavailable(true);
     } finally {
-      setDownloadingDocx(false);
+      setDownloading(false);
     }
   }
 
@@ -2724,11 +2693,14 @@ export default function AtsCvBuilder({ accessCode }) {
   }
 
   // ─────────────── POST-EXPORT THANK-YOU (bilingual) ───────────────
-  // Reached only after a genuinely successful download (see downloadPDF,
-  // which is the single place exportCompleted flips true) — the access
-  // code is single-use, so this is the natural end of the flow rather
-  // than a banner layered on top of a CV the applicant can no longer
-  // usefully edit.
+  // Reached only after a genuinely successful PDF download (see
+  // downloadCvFiles, which is the single place exportCompleted flips
+  // true) — the access code is single-use, so this is the natural end of
+  // the flow rather than a banner layered on top of a CV the applicant
+  // can no longer usefully edit. The Word download may still be in
+  // flight at this point (it's kicked off right after the PDF succeeds);
+  // if it fails, wordUnavailable flips true and this screen picks that up
+  // reactively without blocking or delaying the thank-you message itself.
   if (exportCompleted) {
     return (
       <div dir="rtl" style={{ minHeight: "100vh", background: THEME.pageBg, fontFamily: "'Segoe UI', Tahoma, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -2743,6 +2715,11 @@ export default function AtsCvBuilder({ accessCode }) {
           <div style={{ fontSize: 13.5, color: THEME.text, lineHeight: 2 }} dir="ltr">
             {THANK_YOU_MESSAGE_BILINGUAL.en}
           </div>
+          {wordUnavailable && (
+            <div style={{ ...warnStyle, background: "#fbeaea", borderRadius: 8, padding: "10px 12px", marginTop: 16, textAlign: "center" }} dir="rtl">
+              تم تصدير PDF بنجاح، لكن تعذّر إنشاء نسخة Word هذه المرة.
+            </div>
+          )}
         </div>
       </div>
     );
@@ -2785,14 +2762,14 @@ export default function AtsCvBuilder({ accessCode }) {
             disabled={downloading}
             style={{ ...btnBrass, opacity: downloading ? 0.7 : 1 }}
           >
-            {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التحميل...</> : <><Download size={16} /> تحميل PDF</>}
+            {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التحميل...</> : <><Download size={16} /> تصدير PDF و Word</>}
           </button>
         </div>
 
         {showExportModal && (
           <div
             role="presentation"
-            onClick={() => { if (!downloading && !downloadingDocx) { setShowExportModal(false); setExportError(""); setDocxError(""); } }}
+            onClick={() => { if (!downloading) { setShowExportModal(false); setExportError(""); } }}
             style={{ position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 100 }}
           >
             <div
@@ -2808,32 +2785,19 @@ export default function AtsCvBuilder({ accessCode }) {
                 تأكيد تصدير السيرة الذاتية
               </div>
               <div id="export-modal-desc" style={{ fontSize: 13.5, color: THEME.text, lineHeight: 1.95, marginBottom: exportError ? 12 : 22 }}>
-                بمجرد تصدير سيرتك الذاتية، سيُعتبر طلبك مكتملاً. لإنشاء سيرة جديدة أو إجراء تعديلات لاحقاً، ستحتاج إلى تقديم طلب جديد والحصول على رمز جديد. هل أنت متأكد من رغبتك في التصدير الآن؟
+                بمجرد تصدير سيرتك الذاتية بصيغتي PDF و Word، سيُعتبر طلبك مكتملاً. لإنشاء سيرة جديدة أو إجراء تعديلات لاحقاً، ستحتاج إلى تقديم طلب جديد والحصول على رمز جديد. هل أنت متأكد من رغبتك في التصدير الآن؟
               </div>
               {exportError && (
                 <div style={{ ...warnStyle, background: "#fbeaea", borderRadius: 8, padding: "10px 12px", marginBottom: 22 }}>{exportError}</div>
               )}
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <button onClick={downloadPDF} disabled={downloading} style={{ ...btnPrimary, width: "100%", opacity: downloading ? 0.7 : 1, cursor: downloading ? "wait" : "pointer" }}>
-                  {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التصدير...</> : "نعم، تصدير السيرة"}
+                <button onClick={downloadCvFiles} disabled={downloading} style={{ ...btnPrimary, width: "100%", opacity: downloading ? 0.7 : 1, cursor: downloading ? "wait" : "pointer" }}>
+                  {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التصدير...</> : "نعم، تصدير PDF و Word"}
                 </button>
                 <button
-                  onClick={downloadDocx}
-                  disabled={downloadingDocx}
-                  style={{ ...btnGhost, width: "100%", justifyContent: "center", opacity: downloadingDocx ? 0.7 : 1, cursor: downloadingDocx ? "wait" : "pointer" }}
-                >
-                  {downloadingDocx ? <><Loader2 size={16} className="spin" /> جارٍ إنشاء ملف Word...</> : <><FileText size={16} /> تحميل نسخة Word</>}
-                </button>
-                <div style={{ fontSize: 11.5, color: THEME.text, textAlign: "center", marginTop: -4 }}>
-                  نسخة إضافية اختيارية بصيغة Word — تحميلها وحده لا يُنهي طلبك، يجب تصدير السيرة (PDF) لإكمال الطلب.
-                </div>
-                {docxError && (
-                  <div style={{ ...warnStyle, background: "#fbeaea", borderRadius: 8, padding: "10px 12px" }}>{docxError}</div>
-                )}
-                <button
-                  onClick={() => { setShowExportModal(false); setExportError(""); setDocxError(""); }}
-                  disabled={downloading || downloadingDocx}
-                  style={{ ...btnGhost, width: "100%", justifyContent: "center", opacity: downloading || downloadingDocx ? 0.5 : 1, cursor: downloading || downloadingDocx ? "not-allowed" : "pointer" }}
+                  onClick={() => { setShowExportModal(false); setExportError(""); }}
+                  disabled={downloading}
+                  style={{ ...btnGhost, width: "100%", justifyContent: "center", opacity: downloading ? 0.5 : 1, cursor: downloading ? "not-allowed" : "pointer" }}
                 >
                   رجوع للتعديل
                 </button>
@@ -3465,7 +3429,7 @@ export default function AtsCvBuilder({ accessCode }) {
         </div>
 
         <div style={{ textAlign: "center", marginTop: 16, fontSize: 11.5, color: THEME.text }}>
-          بياناتك تُستخدَم فقط لتوليد ملف PDF عند الضغط على "تحميل PDF"، ولا تُحفظ على أي خادم.
+          بياناتك تُستخدَم فقط لتوليد ملفي PDF و Word عند الضغط على "تصدير PDF و Word"، ولا تُحفظ على أي خادم.
         </div>
       </div>
 
