@@ -22,7 +22,8 @@ export async function GET(request) {
             SELECT id, code, salla_order_number, applicant_name, applicant_email, applicant_phone,
                    applicant_city, applicant_target_role, applicant_target_cities, applicant_internal_notes,
                    requested_package, generation_source, created_by,
-                   pdf_language, lifecycle_status, generated_at, renewed_at
+                   pdf_language, lifecycle_status, generated_at, renewed_at,
+                   (docx_url IS NOT NULL) AS has_docx
             FROM access_codes
             WHERE pdf_url IS NOT NULL AND lifecycle_status = ${statusFilter}
             ORDER BY generated_at DESC
@@ -31,7 +32,8 @@ export async function GET(request) {
             SELECT id, code, salla_order_number, applicant_name, applicant_email, applicant_phone,
                    applicant_city, applicant_target_role, applicant_target_cities, applicant_internal_notes,
                    requested_package, generation_source, created_by,
-                   pdf_language, lifecycle_status, generated_at, renewed_at
+                   pdf_language, lifecycle_status, generated_at, renewed_at,
+                   (docx_url IS NOT NULL) AS has_docx
             FROM access_codes
             WHERE pdf_url IS NOT NULL
             ORDER BY generated_at DESC

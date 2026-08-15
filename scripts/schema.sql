@@ -278,3 +278,13 @@ CREATE TABLE IF NOT EXISTS deletion_log (
   deleted_by TEXT,
   deleted_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Word (.docx) export archive — additive alongside pdf_url; the PDF
+-- generation route/template/Puppeteer pipeline is completely untouched by
+-- this (see lib/cvDocxTemplate.js, lib/docxArchive.js,
+-- app/api/generate-docx). Word is an optional, best-effort extra format:
+-- it does NOT gate on or change lifecycle_status — PDF alone remains the
+-- single-use consumption trigger, exactly as before this feature existed.
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS docx_url TEXT;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS docx_language TEXT;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS docx_generated_at TIMESTAMPTZ;

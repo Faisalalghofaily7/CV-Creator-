@@ -508,6 +508,13 @@ export default function AtsCvBuilder({ accessCode }) {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportCompleted, setExportCompleted] = useState(false);
   const [exportError, setExportError] = useState("");
+  // Word (.docx) export — an independent, additive extra format alongside
+  // the PDF above. Its own state on purpose: downloading a Word copy never
+  // touches `downloading`/`exportError`/`exportCompleted` (the PDF's own
+  // single-use-completion flow, untouched by this feature), so the two
+  // downloads can happen in any order/combination without interfering.
+  const [downloadingDocx, setDownloadingDocx] = useState(false);
+  const [docxError, setDocxError] = useState("");
   // AI-generated professional summary: only auto-generated once per session
   // (aiSummaryGenerated guards against silently overwriting a manual edit
   // the next time the user revisits the preview).
@@ -2133,6 +2140,84 @@ export default function AtsCvBuilder({ accessCode }) {
     }
   }
 
+  // Independent Word (.docx) download — deliberately NOT a shared helper
+  // with downloadPDF above (its payload-building block is duplicated
+  // here on purpose) so this feature can never require touching the PDF
+  // download path. Unlike downloadPDF, a successful Word download does
+  // NOT close the export modal or mark the session complete — that stays
+  // tied exclusively to the PDF, so the customer can still also download
+  // the PDF (or Word again) afterward, matching "either or both".
+  async function downloadDocx() {
+    const issues = findMissingRequiredFields();
+    if (issues.length) {
+      setShowExportModal(false);
+      setMissingFieldIssues(issues);
+      setShowMissingFieldsModal(true);
+      setPreview(false);
+      return;
+    }
+    setDownloadingDocx(true);
+    setDocxError("");
+    const isIOS = typeof navigator !== "undefined" && (/iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+    const iosTab = isIOS ? window.open("", "_blank") : null;
+    try {
+      const res = await fetch("/api/generate-docx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          form: {
+            name: form.name,
+            email: form.email,
+            phone: cvPhoneValue,
+            city: cityValue,
+            targetRoles: targetRoles.join(sep),
+            targetCities: targetCitiesStr,
+            internalNotes,
+            yearsOfExperience: form.yearsOfExperience,
+            linkedin: form.linkedin,
+            summary: form.summary,
+            achievements: displayAchievementsStr,
+            languages: languagesStr,
+          },
+          experiences: displayExperiences,
+          education: displayEducation,
+          courses: displayCourses,
+          certifications: displayCertifications,
+          customSections: displayCustomSections,
+          techSkills: techSkillsStr,
+          softSkills: softSkillsStr,
+          lang: cvLang,
+          accessCode,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Word generation failed");
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      if (isIOS && iosTab) {
+        iosTab.location.href = url;
+      } else {
+        const safeName = (form.name || "CV").replace(/\s+/g, "_");
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${safeName}_CV.docx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (e) {
+      if (iosTab) iosTab.close();
+      setDocxError(e.message && e.message !== "Word generation failed" ? e.message : "تعذّر إنشاء ملف Word. يمكنك تحميل PDF بدلاً من ذلك.");
+    } finally {
+      setDownloadingDocx(false);
+    }
+  }
+
   // Everything the summary is actually generated FROM — compared against
   // summaryInputSnapshot on every Preview visit to decide whether the
   // cached summary is still valid (see the summaryInputSnapshot state
@@ -2707,7 +2792,7 @@ export default function AtsCvBuilder({ accessCode }) {
         {showExportModal && (
           <div
             role="presentation"
-            onClick={() => { if (!downloading) { setShowExportModal(false); setExportError(""); } }}
+            onClick={() => { if (!downloading && !downloadingDocx) { setShowExportModal(false); setExportError(""); setDocxError(""); } }}
             style={{ position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 100 }}
           >
             <div
@@ -2733,9 +2818,22 @@ export default function AtsCvBuilder({ accessCode }) {
                   {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التصدير...</> : "نعم، تصدير السيرة"}
                 </button>
                 <button
-                  onClick={() => { setShowExportModal(false); setExportError(""); }}
-                  disabled={downloading}
-                  style={{ ...btnGhost, width: "100%", justifyContent: "center", opacity: downloading ? 0.5 : 1, cursor: downloading ? "not-allowed" : "pointer" }}
+                  onClick={downloadDocx}
+                  disabled={downloadingDocx}
+                  style={{ ...btnGhost, width: "100%", justifyContent: "center", opacity: downloadingDocx ? 0.7 : 1, cursor: downloadingDocx ? "wait" : "pointer" }}
+                >
+                  {downloadingDocx ? <><Loader2 size={16} className="spin" /> جارٍ إنشاء ملف Word...</> : <><FileText size={16} /> تحميل نسخة Word</>}
+                </button>
+                <div style={{ fontSize: 11.5, color: THEME.text, textAlign: "center", marginTop: -4 }}>
+                  نسخة إضافية اختيارية بصيغة Word — تحميلها وحده لا يُنهي طلبك، يجب تصدير السيرة (PDF) لإكمال الطلب.
+                </div>
+                {docxError && (
+                  <div style={{ ...warnStyle, background: "#fbeaea", borderRadius: 8, padding: "10px 12px" }}>{docxError}</div>
+                )}
+                <button
+                  onClick={() => { setShowExportModal(false); setExportError(""); setDocxError(""); }}
+                  disabled={downloading || downloadingDocx}
+                  style={{ ...btnGhost, width: "100%", justifyContent: "center", opacity: downloading || downloadingDocx ? 0.5 : 1, cursor: downloading || downloadingDocx ? "not-allowed" : "pointer" }}
                 >
                   رجوع للتعديل
                 </button>

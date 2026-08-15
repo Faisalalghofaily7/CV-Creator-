@@ -1033,6 +1033,11 @@ export default function AdminCodes({ role, staffType }) {
                       <a href={`/api/admin/cvs/${v.id}/pdf`} target="_blank" rel="noreferrer" style={btnViewLink}>
                         <FileText size={14} /> عرض / تحميل PDF
                       </a>
+                      {v.has_docx && (
+                        <a href={`/api/admin/cvs/${v.id}/docx`} style={btnViewLink} title="نسخة إضافية اختيارية بصيغة Word">
+                          <FileText size={14} /> تحميل Word
+                        </a>
+                      )}
 
                       <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: C.slate, fontWeight: 600 }}>
                         الحالة:
