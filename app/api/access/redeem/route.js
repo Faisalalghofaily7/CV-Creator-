@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getSql } from "../../../../lib/db";
 import { createUserSession, setSessionCookie } from "../../../../lib/userSession";
+import { notifyAdminStatusChange } from "../../../../lib/adminStatusNotifications";
 
 export const runtime = "nodejs";
 
@@ -22,7 +24,7 @@ export async function POST(request) {
     // refreshing the page or backing out before exporting never costs the
     // user their single-use code.
     const [row] = await sql`
-      SELECT id, lifecycle_status
+      SELECT id, lifecycle_status, applicant_name, salla_order_number, requested_package
       FROM access_codes
       WHERE code = ${code} AND lifecycle_status IN ('available', 'customer_in_progress')
     `;
@@ -42,6 +44,17 @@ export async function POST(request) {
     `;
     if (advanced) {
       await sql`INSERT INTO sending_status_history (access_code_id, status, changed_by) VALUES (${row.id}, 'customer_in_progress', NULL)`;
+      waitUntil(
+        notifyAdminStatusChange({
+          track: "sending",
+          code,
+          sallaOrderNumber: row.salla_order_number,
+          applicantName: row.applicant_name,
+          requestedPackage: row.requested_package,
+          oldStatus: "available",
+          newStatus: "customer_in_progress",
+        })
+      );
     }
 
     // Remembers the validated code in a server-side session so a page

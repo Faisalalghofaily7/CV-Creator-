@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getSql } from "../../../../../../lib/db";
 import { requireAdminApi, getAdminSessionFromRequest } from "../../../../../../lib/adminAuth";
 import { isValidLinkedinOrderStatus, parseCompositeOrderId } from "../../../../../../lib/linkedinOrders";
 import { logLinkedinStatusChange } from "../../../../../../lib/linkedinOrdersDb";
+import { notifyAdminStatusChange } from "../../../../../../lib/adminStatusNotifications";
 
 export const runtime = "nodejs";
 
@@ -39,20 +41,45 @@ export async function PATCH(request, { params }) {
     const sql = getSql();
 
     if (parsed.sourceType === "linkedin_only") {
+      const [existing] = await sql`SELECT status, applicant_name, salla_order_number, requested_package FROM linkedin_orders WHERE id = ${parsed.id}`;
       const [row] = await sql`
         UPDATE linkedin_orders SET status = ${status} WHERE id = ${parsed.id} RETURNING id, status
       `;
       if (!row) return NextResponse.json({ error: "السجل غير موجود." }, { status: 404 });
       await logLinkedinStatusChange({ linkedinOrderId: parsed.id, status, changedBy });
+      waitUntil(
+        notifyAdminStatusChange({
+          track: "linkedin",
+          sallaOrderNumber: existing?.salla_order_number,
+          applicantName: existing?.applicant_name,
+          requestedPackage: existing?.requested_package,
+          oldStatus: existing?.status,
+          newStatus: status,
+          changedBy,
+        })
+      );
       return NextResponse.json({ order: { id: `lo-${row.id}`, status: row.status } });
     }
 
+    const [existing] = await sql`SELECT linkedin_status, code, applicant_name, salla_order_number, requested_package FROM access_codes WHERE id = ${parsed.id}`;
     const [row] = await sql`
       UPDATE access_codes SET linkedin_status = ${status} WHERE id = ${parsed.id} AND linkedin_status IS NOT NULL
       RETURNING id, linkedin_status
     `;
     if (!row) return NextResponse.json({ error: "السجل غير موجود." }, { status: 404 });
     await logLinkedinStatusChange({ accessCodeId: parsed.id, status, changedBy });
+    waitUntil(
+      notifyAdminStatusChange({
+        track: "linkedin",
+        code: existing?.code,
+        sallaOrderNumber: existing?.salla_order_number,
+        applicantName: existing?.applicant_name,
+        requestedPackage: existing?.requested_package,
+        oldStatus: existing?.linkedin_status,
+        newStatus: status,
+        changedBy,
+      })
+    );
     return NextResponse.json({ order: { id: `cv-${row.id}`, status: row.linkedin_status } });
   } catch (err) {
     console.error("Failed to update LinkedIn order status:", err);

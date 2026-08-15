@@ -4,6 +4,7 @@ import puppeteer from "puppeteer-core";
 import { waitUntil } from "@vercel/functions";
 import { buildCvHtml } from "../../../lib/cvHtmlTemplate";
 import { archiveGeneratedPdf } from "../../../lib/cvArchive";
+import { notifyAdminStatusChange } from "../../../lib/adminStatusNotifications";
 import { getSql } from "../../../lib/db";
 import { destroySessionsForCode, clearSessionCookie } from "../../../lib/userSession";
 
@@ -210,13 +211,38 @@ export async function POST(request) {
       UPDATE access_codes
       SET status = 'used', used_at = now(), lifecycle_status = 'awaiting_sending'
       WHERE code = ${code} AND lifecycle_status IN ('available', 'customer_in_progress')
-      RETURNING id
+      RETURNING id, applicant_name, salla_order_number, requested_package
     `;
     timings.markUsed = Date.now() - tMark;
     if (!consumed) {
       return NextResponse.json({ error: "الكود غير صالح أو تم استخدامه من قبل." }, { status: 409 });
     }
     await sql`INSERT INTO sending_status_history (access_code_id, status, changed_by) VALUES (${consumed.id}, 'awaiting_sending', NULL)`;
+    // Best-effort only, run in the background: the prior stage is whatever
+    // the immediately-preceding sending_status_history row says (almost
+    // always 'customer_in_progress', set by /api/access/redeem just before
+    // this route ever runs) — a plain best-effort lookup, kept out of the
+    // single-use consumption UPDATE above so that guard's atomicity is
+    // untouched by this feature.
+    waitUntil(
+      sql`
+        SELECT status FROM sending_status_history
+        WHERE access_code_id = ${consumed.id} AND status <> 'awaiting_sending'
+        ORDER BY changed_at DESC LIMIT 1
+      `
+        .then(([prior]) =>
+          notifyAdminStatusChange({
+            track: "sending",
+            code,
+            sallaOrderNumber: consumed.salla_order_number,
+            applicantName: consumed.applicant_name || form?.name,
+            requestedPackage: consumed.requested_package,
+            oldStatus: prior?.status || null,
+            newStatus: "awaiting_sending",
+          })
+        )
+        .catch((err) => console.error("[admin-status-notify] failed to resolve prior status for generate-pdf notification (non-fatal):", err))
+    );
     // The code's session (used to survive page refreshes before export) is
     // done its job now that the code itself is consumed.
     destroySessionsForCode(code);

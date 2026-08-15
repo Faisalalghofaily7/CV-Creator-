@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getSql } from "../../../../../../lib/db";
 import { requireAdminApi, getAdminSessionFromRequest } from "../../../../../../lib/adminAuth";
 import { isManualLifecycleStatus } from "../../../../../../lib/lifecycleStatus";
 import { staffCanAccessRecord } from "../../../../../../lib/staffAccounts";
+import { notifyAdminStatusChange } from "../../../../../../lib/adminStatusNotifications";
 
 export const runtime = "nodejs";
 
@@ -32,7 +34,7 @@ export async function PATCH(request, { params }) {
   try {
     const sql = getSql();
 
-    const [existing] = await sql`SELECT requested_package FROM access_codes WHERE id = ${id} AND pdf_url IS NOT NULL`;
+    const [existing] = await sql`SELECT requested_package, lifecycle_status, code, applicant_name, salla_order_number FROM access_codes WHERE id = ${id} AND pdf_url IS NOT NULL`;
     if (!existing) {
       return NextResponse.json({ error: "السجل غير موجود." }, { status: 404 });
     }
@@ -55,6 +57,18 @@ export async function PATCH(request, { params }) {
       (session?.role === "staff" ? process.env.STAFF_USERNAME : process.env.ADMIN_USERNAME) ||
       null;
     await sql`INSERT INTO sending_status_history (access_code_id, status, changed_by) VALUES (${id}, ${status}, ${changedBy})`;
+    waitUntil(
+      notifyAdminStatusChange({
+        track: "sending",
+        code: existing.code,
+        sallaOrderNumber: existing.salla_order_number,
+        applicantName: existing.applicant_name,
+        requestedPackage: existing.requested_package,
+        oldStatus: existing.lifecycle_status,
+        newStatus: status,
+        changedBy,
+      })
+    );
 
     return NextResponse.json({ cv: row });
   } catch (err) {
