@@ -242,3 +242,39 @@ ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS linkedin_notified_at TIMESTAMP
 -- free text the applicant wrote, never touched by AI.
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_target_cities TEXT;
 ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS applicant_internal_notes TEXT;
+
+-- Admin-only code renewal: resets a used code back to redeemable while
+-- deliberately KEEPING its existing archived PDF (pdf_url is untouched
+-- here — see lib/cvArchive.js, which only replaces it once a new PDF is
+-- actually generated). renewed_at/renewed_by is the CURRENT pending
+-- renewal, read by the admin UI to show a "don't send the old CV" banner
+-- on both the sending and LinkedIn panels; cleared the moment a new PDF
+-- replaces the old one. renewal_log is the permanent append-only audit
+-- trail (a code can be renewed more than once over its life), matching
+-- the sending_status_history/linkedin_status_history pattern above.
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS renewed_at TIMESTAMPTZ;
+ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS renewed_by TEXT;
+
+CREATE TABLE IF NOT EXISTS renewal_log (
+  id SERIAL PRIMARY KEY,
+  access_code_id INTEGER NOT NULL REFERENCES access_codes(id) ON DELETE CASCADE,
+  renewed_by TEXT,
+  renewed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS renewal_log_access_code_id_idx ON renewal_log (access_code_id);
+
+-- Admin-only permanent deletion audit trail: the deleted row itself is
+-- gone (ON DELETE CASCADE takes its history rows with it), so this is the
+-- only place a deletion is still visible afterward. record_type
+-- distinguishes which table the deleted row came from — an access_codes
+-- row (and its archived PDF, if any) or a standalone linkedin_orders row.
+CREATE TABLE IF NOT EXISTS deletion_log (
+  id SERIAL PRIMARY KEY,
+  record_type TEXT NOT NULL CHECK (record_type IN ('access_code', 'linkedin_order')),
+  record_id INTEGER NOT NULL,
+  code TEXT,
+  salla_order_number TEXT,
+  applicant_name TEXT,
+  deleted_by TEXT,
+  deleted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

@@ -37,7 +37,7 @@ export async function GET(request) {
     `;
     const integratedRows = await sql`
       SELECT id, code, salla_order_number, applicant_name, applicant_phone, applicant_email, requested_package,
-             linkedin_status AS status, lifecycle_status, generation_source, created_by, created_at,
+             linkedin_status AS status, lifecycle_status, generation_source, created_by, created_at, renewed_at,
              linkedin_notification_status AS notification_status, linkedin_notified_email AS notified_email,
              linkedin_notified_at AS notified_at
       FROM access_codes
@@ -79,6 +79,7 @@ export async function GET(request) {
         createdAt: r.created_at,
         code: r.code,
         cvLifecycleStatus: r.lifecycle_status,
+        renewedAt: r.renewed_at,
         notificationStatus: r.notification_status,
         notifiedEmail: r.notified_email,
         notifiedAt: r.notified_at,

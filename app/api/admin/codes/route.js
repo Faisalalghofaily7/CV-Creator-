@@ -16,7 +16,7 @@ export async function GET(request) {
     const sql = getSql();
     const rows = await sql`
       SELECT id, code, salla_order_number, applicant_name, applicant_phone, requested_package,
-             lifecycle_status, generation_source, created_by, created_at, used_at
+             lifecycle_status, generation_source, created_by, created_at, used_at, renewed_at
       FROM access_codes
       ORDER BY created_at DESC
     `;

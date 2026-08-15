@@ -80,6 +80,9 @@ export default function AdminCodes({ role, staffType }) {
   const [linkedinExpandedId, setLinkedinExpandedId] = useState(null);
   const [linkedinHistoryCache, setLinkedinHistoryCache] = useState({});
 
+  const [deletingRecordId, setDeletingRecordId] = useState(null);
+  const [renewingId, setRenewingId] = useState(null);
+
   async function loadCodes() {
     setLoadingCodes(true);
     setLoadError("");
@@ -455,6 +458,77 @@ export default function AdminCodes({ role, staffType }) {
     }
   }
 
+  // Permanent deletion of an access-code order — the confirmation text is
+  // exact wording the admin asked for. Removes it from every local list
+  // it might be showing in (codes/cvs/the merged LinkedIn panel) so the UI
+  // never displays a record the server just deleted, without needing a
+  // full refetch.
+  async function handleDeleteCode(id) {
+    if (!window.confirm("هل أنت متأكد؟ سيتم حذف الطلب نهائيًا — لا يمكن التراجع")) return;
+    setDeletingRecordId(id);
+    try {
+      const res = await fetch(`/api/admin/codes/${id}`, { method: "DELETE" });
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر حذف الطلب.");
+      setCodes((prev) => prev.filter((c) => c.id !== id));
+      setCvs((prev) => prev.filter((c) => c.id !== id));
+      setLinkedinOrders((prev) => prev.filter((o) => o.id !== `cv-${id}`));
+    } catch (err) {
+      alert(err.message || "تعذّر حذف الطلب.");
+    } finally {
+      setDeletingRecordId(null);
+    }
+  }
+
+  // Deletes a record shown in the merged LinkedIn panel — id is the
+  // composite "lo-N"/"cv-N" id that panel already uses everywhere else
+  // (see updateLinkedinOrderStatus above). An "cv-N" (integrated_cv) row
+  // is the SAME access_codes row the codes/archive tabs show, so it's kept
+  // in sync there too.
+  async function handleDeleteLinkedinOrder(id) {
+    if (!window.confirm("هل أنت متأكد؟ سيتم حذف الطلب نهائيًا — لا يمكن التراجع")) return;
+    setDeletingRecordId(id);
+    try {
+      const res = await fetch(`/api/admin/linkedin-orders/${id}`, { method: "DELETE" });
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر حذف الطلب.");
+      setLinkedinOrders((prev) => prev.filter((o) => o.id !== id));
+      const parsed = parseCompositeOrderId(id);
+      if (parsed?.sourceType === "integrated_cv") {
+        setCodes((prev) => prev.filter((c) => c.id !== parsed.id));
+        setCvs((prev) => prev.filter((c) => c.id !== parsed.id));
+      }
+    } catch (err) {
+      alert(err.message || "تعذّر حذف الطلب.");
+    } finally {
+      setDeletingRecordId(null);
+    }
+  }
+
+  // Resets a used code back to redeemable — see lib/adminRenewal.js. Keeps
+  // the existing CV, so nothing needs removing from cvs/linkedinOrders
+  // here; the returned row's lifecycle_status/linkedin_status/renewed_at
+  // are merged in wherever that code is currently shown.
+  async function handleRenewCode(id) {
+    if (!window.confirm("سيتم إعادة تفعيل هذا الكود لاستخدام جديد مع الاحتفاظ بالسيرة الحالية حتى تصدر سيرة جديدة. هل تريد المتابعة؟")) return;
+    setRenewingId(id);
+    try {
+      const res = await fetch(`/api/admin/codes/${id}/renew`, { method: "POST" });
+      if (res.status === 401) return redirectToLogin();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "تعذّر تجديد الكود.");
+      setCodes((prev) => prev.map((c) => (c.id === id ? { ...c, ...data.code } : c)));
+      setCvs((prev) => prev.map((c) => (c.id === id ? { ...c, ...data.code } : c)));
+      if (tab === "linkedin") loadLinkedinOrders();
+    } catch (err) {
+      alert(err.message || "تعذّر تجديد الكود.");
+    } finally {
+      setRenewingId(null);
+    }
+  }
+
   return (
     <div dir="rtl" style={{ minHeight: "100vh", background: C.paper, fontFamily: "'Segoe UI', Tahoma, sans-serif", color: C.ink }}>
       <div style={{ background: C.ink, padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -600,15 +674,16 @@ export default function AdminCodes({ role, staffType }) {
                 <th style={thStyle}>المُنشئ</th>
                 <th style={thStyle}>وقت الإنشاء</th>
                 <th style={thStyle}>السجل الزمني</th>
+                <th style={thStyle}>إجراءات</th>
               </tr>
             </thead>
             <tbody>
               {loadingCodes ? (
-                <tr><td colSpan={10} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
+                <tr><td colSpan={11} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>جارٍ التحميل...</td></tr>
               ) : loadError ? (
-                <tr><td colSpan={10} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{loadError}</td></tr>
+                <tr><td colSpan={11} style={{ ...tdStyle, textAlign: "center", color: "#b3261e", padding: 24 }}>{loadError}</td></tr>
               ) : codes.length === 0 ? (
-                <tr><td colSpan={10} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد أكواد بعد — اضغط "توليد كود جديد"</td></tr>
+                <tr><td colSpan={11} style={{ ...tdStyle, textAlign: "center", color: C.slate, padding: 24 }}>لا توجد أكواد بعد — اضغط "توليد كود جديد"</td></tr>
               ) : (
                 codes
                   .filter((c) => !codesStatusFilter || c.lifecycle_status === codesStatusFilter)
@@ -654,10 +729,40 @@ export default function AdminCodes({ role, staffType }) {
                           {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} السجل
                         </button>
                       </td>
+                      <td style={tdStyle}>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {!["available", "customer_in_progress"].includes(c.lifecycle_status) && (
+                            <button
+                              onClick={() => handleRenewCode(c.id)}
+                              disabled={renewingId === c.id}
+                              style={{ ...btnHistoryToggle, opacity: renewingId === c.id ? 0.6 : 1 }}
+                              title="تجديد الكود لاستخدام جديد مع الاحتفاظ بالسيرة الحالية"
+                            >
+                              <RefreshCw size={13} /> تجديد
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteCode(c.id)}
+                            disabled={deletingRecordId === c.id}
+                            style={{ ...btnHistoryToggle, color: "#b3261e", borderColor: "#f3c9c4", opacity: deletingRecordId === c.id ? 0.6 : 1 }}
+                            title="حذف الطلب نهائيًا"
+                          >
+                            <Trash2 size={13} /> حذف
+                          </button>
+                        </div>
+                      </td>
                     </tr>
+                    {c.renewed_at && (
+                      <tr>
+                        <td colSpan={11} style={{ padding: "8px 14px", background: "#fff3cd", borderTop: `1px solid #ffe08a`, fontSize: 12, fontWeight: 700, color: "#8a6100" }}>
+                          <AlertTriangle size={13} style={{ verticalAlign: "-2px", marginInlineEnd: 5 }} />
+                          تم تجديد الكود — بانتظار سيرة جديدة، لا ترسل السيرة القديمة.
+                        </td>
+                      </tr>
+                    )}
                     {expanded && (
                       <tr>
-                        <td colSpan={10} style={{ padding: "10px 14px", background: C.soft, borderTop: `1px dashed ${C.line}` }}>
+                        <td colSpan={11} style={{ padding: "10px 14px", background: C.soft, borderTop: `1px dashed ${C.line}` }}>
                           <div style={{ marginBottom: 12 }}>
                             <WhatsappMessageBox message={c.whatsapp_message} defaultOpen />
                           </div>
@@ -839,6 +944,8 @@ export default function AdminCodes({ role, staffType }) {
           toggleHistory={toggleLinkedinHistory}
           historyCache={linkedinHistoryCache}
           isAdmin={isAdmin}
+          handleDelete={handleDeleteLinkedinOrder}
+          deletingRecordId={deletingRecordId}
         />
         ) : (
         <>
@@ -861,7 +968,16 @@ export default function AdminCodes({ role, staffType }) {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {cvs.map((v) => {
-                const colors = LIFECYCLE_STATUS_COLORS[v.lifecycle_status] || LIFECYCLE_STATUS_COLORS.awaiting_sending;
+                // A renewed code sits back at 'available'/'customer_in_progress'
+                // (see lib/adminRenewal.js) while this row still shows its OLD
+                // PDF — the raw status label would misleadingly read as "not
+                // started" instead of "redoing", so it's overridden here (and
+                // the banner below) whenever renewed_at is still pending.
+                const isRenewPending = !!v.renewed_at;
+                const colors = isRenewPending
+                  ? { bg: "#fff3cd", fg: "#8a6100" }
+                  : LIFECYCLE_STATUS_COLORS[v.lifecycle_status] || LIFECYCLE_STATUS_COLORS.awaiting_sending;
+                const statusLabel = isRenewPending ? "قيد الإعادة / بانتظار سيرة جديدة" : LIFECYCLE_STATUS_LABELS[v.lifecycle_status] || v.lifecycle_status;
                 const sourceColors = GENERATION_SOURCE_COLORS[v.generation_source] || GENERATION_SOURCE_COLORS.unknown;
                 const history = historyCache[v.id];
                 const expanded = expandedId === v.id;
@@ -877,9 +993,16 @@ export default function AdminCodes({ role, staffType }) {
                         )}
                       </div>
                       <span style={{ display: "inline-block", background: colors.bg, color: colors.fg, fontSize: 11.5, fontWeight: 700, borderRadius: 999, padding: "5px 12px", whiteSpace: "nowrap" }}>
-                        {LIFECYCLE_STATUS_LABELS[v.lifecycle_status] || v.lifecycle_status}
+                        {statusLabel}
                       </span>
                     </div>
+
+                    {isRenewPending && (
+                      <div style={{ marginTop: 10, display: "flex", alignItems: "flex-start", gap: 6, fontSize: 12.5, fontWeight: 700, color: "#8a6100", background: "#fff3cd", border: "1px solid #ffe08a", borderRadius: 8, padding: "10px 12px" }}>
+                        <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                        <span>تم تجديد الكود — بانتظار سيرة جديدة، لا ترسل السيرة القديمة.</span>
+                      </div>
+                    )}
 
                     <div style={fieldGrid}>
                       <Field icon={Mail} label="البريد الإلكتروني" value={v.applicant_email} copyable />
@@ -928,6 +1051,27 @@ export default function AdminCodes({ role, staffType }) {
                       <button onClick={() => toggleHistory(v.id)} style={btnHistoryToggle}>
                         {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} السجل الزمني
                       </button>
+
+                      {isAdmin && !isRenewPending && !["available", "customer_in_progress"].includes(v.lifecycle_status) && (
+                        <button
+                          onClick={() => handleRenewCode(v.id)}
+                          disabled={renewingId === v.id}
+                          style={{ ...btnHistoryToggle, opacity: renewingId === v.id ? 0.6 : 1 }}
+                          title="تجديد الكود لاستخدام جديد مع الاحتفاظ بالسيرة الحالية"
+                        >
+                          <RefreshCw size={13} /> تجديد الكود
+                        </button>
+                      )}
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleDeleteCode(v.id)}
+                          disabled={deletingRecordId === v.id}
+                          style={{ ...btnHistoryToggle, color: "#b3261e", borderColor: "#f3c9c4", opacity: deletingRecordId === v.id ? 0.6 : 1 }}
+                          title="حذف الطلب نهائيًا"
+                        >
+                          <Trash2 size={13} /> حذف
+                        </button>
+                      )}
                     </div>
 
                     {statusErrors[v.id] && <div style={{ marginTop: 8, fontSize: 12, color: "#b3261e" }}>{statusErrors[v.id]}</div>}
@@ -1160,7 +1304,7 @@ function StaffRow({ staff, saving, rowError, patchStaff, resetDraft, setResetDra
   );
 }
 
-function LinkedinPanel({ orders, loading, error, statusFilter, setStatusFilter, updatingId, statusErrors, updateStatus, expandedId, toggleHistory, historyCache, isAdmin }) {
+function LinkedinPanel({ orders, loading, error, statusFilter, setStatusFilter, updatingId, statusErrors, updateStatus, expandedId, toggleHistory, historyCache, isAdmin, handleDelete, deletingRecordId }) {
   const filtered = orders.filter((o) => !statusFilter || o.status === statusFilter);
   return (
     <>
@@ -1200,6 +1344,13 @@ function LinkedinPanel({ orders, loading, error, statusFilter, setStatusFilter, 
                   </span>
                 </div>
 
+                {o.renewedAt && (
+                  <div style={{ marginTop: 10, display: "flex", alignItems: "flex-start", gap: 6, fontSize: 12.5, fontWeight: 700, color: "#8a6100", background: "#fff3cd", border: "1px solid #ffe08a", borderRadius: 8, padding: "10px 12px" }}>
+                    <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span>تم تجديد الكود — بانتظار سيرة جديدة، لا ترسل السيرة القديمة.</span>
+                  </div>
+                )}
+
                 <div style={fieldGrid}>
                   <Field icon={User} label="اسم العميل" value={o.applicantName} copyable />
                   <Field icon={Phone} label="رقم الجوال" value={o.applicantPhone} copyable whatsapp />
@@ -1238,6 +1389,17 @@ function LinkedinPanel({ orders, loading, error, statusFilter, setStatusFilter, 
                   <button onClick={() => toggleHistory(o.id)} style={btnHistoryToggle}>
                     {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} السجل الزمني
                   </button>
+
+                  {isAdmin && (
+                    <button
+                      onClick={() => handleDelete(o.id)}
+                      disabled={deletingRecordId === o.id}
+                      style={{ ...btnHistoryToggle, color: "#b3261e", borderColor: "#f3c9c4", opacity: deletingRecordId === o.id ? 0.6 : 1 }}
+                      title="حذف الطلب نهائيًا"
+                    >
+                      <Trash2 size={13} /> حذف
+                    </button>
+                  )}
                 </div>
 
                 {statusErrors[o.id] && <div style={{ marginTop: 8, fontSize: 12, color: "#b3261e" }}>{statusErrors[o.id]}</div>}
