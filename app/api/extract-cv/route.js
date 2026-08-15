@@ -4,20 +4,33 @@ import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
 import { retryWithBackoff } from "../../../lib/aiRetry";
 
 export const runtime = "nodejs";
-// Comfortably above the bounded retry window (see PER_ATTEMPT_TIMEOUT_MS
-// and retryWithBackoff's default ~40s window below) plus headroom for an
-// in-flight attempt that was still running when the window closed.
-export const maxDuration = 90;
+// Comfortably above two full per-attempt timeouts back-to-back (worst case
+// PER_ATTEMPT_TIMEOUT_MS twice, plus a short backoff between them) plus
+// headroom for document reading/parsing and response overhead.
+export const maxDuration = 120;
 
 // Per-attempt timeout, not the total retry budget — the SDK's own default
 // (10 minutes) would let a single hung attempt swallow the entire bounded
 // window on its own. maxRetries: 0 disables the SDK's built-in retry too,
 // so retryWithBackoff has exclusive, observable control over every retry
 // (one call to .create() below is exactly one logged attempt). Longer than
-// the other AI routes' per-attempt budget — a full CV extraction with up
-// to 16000 output tokens genuinely takes longer than a short summary or a
-// handful of polished lines.
-const PER_ATTEMPT_TIMEOUT_MS = 25_000;
+// the other AI routes' per-attempt budget — a full CV extraction reads a
+// whole document (potentially multi-page, image-heavy PDF) AND generates
+// up to 16000 output tokens, which genuinely takes longer than a short
+// summary or a handful of polished lines. 25s was proving too tight in
+// production — real CVs were consistently hitting this ceiling on every
+// attempt (a client-side timeout, not a real API error), so this is raised
+// with real headroom instead of just enough for the fastest case.
+const PER_ATTEMPT_TIMEOUT_MS = 45_000;
+
+// Wider than the default 40s window (see retryWithBackoff) so a second
+// attempt isn't cut off before it even gets to run its own full timeout —
+// with a 45s per-attempt budget, a default 40s window would let the first
+// slow-but-not-hung attempt exhaust the window on its own and skip the
+// retry entirely. Sized to allow exactly two full-length attempts
+// (45s + ~1s backoff + 45s ≈ 91s) and then stop — not a third, which
+// wouldn't have room to finish inside maxDuration (120s) anyway.
+const RETRY_WINDOW_MS = 90_000;
 
 // Conservative cap — comfortably covers a real multi-page CV while staying
 // well under Vercel's inbound request-body limit (~4.5MB on Hobby) and
@@ -149,7 +162,7 @@ export async function POST(request) {
           throw err;
         }
       },
-      { logTag: "[EXTRACT-CV-RETRY]" }
+      { logTag: "[EXTRACT-CV-RETRY]", windowMs: RETRY_WINDOW_MS }
     );
 
     if (!extractResult.ok) {
