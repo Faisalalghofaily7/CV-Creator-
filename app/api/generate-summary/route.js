@@ -41,8 +41,9 @@ Instructions:
    - NEVER invent job titles, companies, or qualifications not mentioned.
    - Stick strictly to the given facts, phrased professionally.
 7. Write in professional third-person style (no "I"), like real professional CVs.
-8. Do NOT add a heading — return only the summary text.
-9. The final summary MUST be entirely in ${languageName}, regardless of what language the applicant's data below is written in. If the applicant wrote any of their data in Arabic while the target CV language is English (or vice versa), translate that content faithfully into ${languageName} — translate meaning, not word-for-word — while still following every rule above (never invent facts; only translate and phrase professionally).
+8. If "Years of experience" is provided in the data below, naturally state that figure somewhere in the summary (e.g. "...with 3 years of experience in..."), using the exact wording given — including any "about"/"تقريبًا" qualifier — rather than a different number or rounding of your own.
+9. Do NOT add a heading — return only the summary text.
+10. The final summary MUST be entirely in ${languageName}, regardless of what language the applicant's data below is written in. If the applicant wrote any of their data in Arabic while the target CV language is English (or vice versa), translate that content faithfully into ${languageName} — translate meaning, not word-for-word — while still following every rule above (never invent facts; only translate and phrase professionally).
 
 Return ONLY the professional summary text, with no preamble or explanation.`;
 }

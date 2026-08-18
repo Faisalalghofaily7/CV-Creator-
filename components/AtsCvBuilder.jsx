@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon, Layers, Upload } from "lucide-react";
 import { CV_LABELS } from "../lib/cvLabels";
+import { getCvQualityIssues, isValidNamePartCount, isExperienceEntryComplete, isCourseEntryComplete, isSparseCv, SPARSE_SKILLS_MINIMUM } from "../lib/cvQualityRules";
 
 // Persists in-progress form data across page refreshes. Keyed to the
 // access code so a *different* code (a new session) never inherits a
@@ -277,19 +278,79 @@ const THANK_YOU_MESSAGE_BILINGUAL = {
   en: "Thank you for using our service. We'll now work on sending your CV to companies, and we'll share the report with you via WhatsApp within 72 hours. The number of companies depends on the target cities and jobs you selected.",
 };
 
-// Appends the "years experience" / "سنوات خبرة" label to a years-of-
-// experience value, UNLESS the value already ends with that exact label —
-// a safety net against a translated/extracted value that (against the
-// translate-extraction prompt's instructions) folded the label wording
-// into the value itself, which would otherwise render duplicated, e.g.
-// "4 سنوات خبرة سنوات خبرة". Same helper duplicated in lib/cvHtmlTemplate.js
-// (the server-side PDF template) since the two run in separate modules.
-function formatYearsLine(value, label) {
-  const v = String(value || "").trim();
-  if (!v) return "";
-  const trimmedLabel = String(label || "").trim();
-  if (trimmedLabel && v.toLowerCase().endsWith(trimmedLabel.toLowerCase())) return v;
-  return trimmedLabel ? `${v} ${trimmedLabel}` : v;
+// Total months of an experience entry's date range, or null if the entry
+// doesn't have enough to compute one (incomplete dates — by the time this
+// matters for export, findMissingRequiredFields has already required every
+// started entry to have full dates; this stays defensive for the live-
+// typing preview, where an in-progress entry is normal). "current" uses
+// today as the effective end date.
+function experienceMonthsRange(x) {
+  if (!x.fromYear || !x.fromMonth) return null;
+  const fromM = Number(x.fromYear) * 12 + Number(x.fromMonth);
+  let toM;
+  if (x.current) {
+    const now = new Date();
+    toM = now.getFullYear() * 12 + (now.getMonth() + 1);
+  } else {
+    if (!x.toYear || !x.toMonth) return null;
+    toM = Number(x.toYear) * 12 + Number(x.toMonth);
+  }
+  if (toM < fromM) return null; // invalid range — already flagged by dateRangeInvalid
+  return [fromM, toM];
+}
+
+// Total months of REAL experience across all entries, merging overlapping/
+// concurrent ranges (classic interval union) so two simultaneous jobs are
+// never double-counted, and gaps between jobs are never counted at all.
+function calculateTotalExperienceMonths(experiences) {
+  const ranges = experiences.map(experienceMonthsRange).filter(Boolean).sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let curStart = null;
+  let curEnd = null;
+  for (const [start, end] of ranges) {
+    if (curStart === null) {
+      curStart = start;
+      curEnd = end;
+    } else if (start <= curEnd) {
+      curEnd = Math.max(curEnd, end);
+    } else {
+      total += curEnd - curStart;
+      curStart = start;
+      curEnd = end;
+    }
+  }
+  if (curStart !== null) total += curEnd - curStart;
+  return total;
+}
+
+// Arabic cardinal-number/noun agreement for "years": 1 = "سنة", 2 =
+// "سنتان" (dual), 3-10 = "N سنوات" (plural), 11+ = "N سنة" (singular after
+// the number, standard Arabic grammar for compound numbers).
+function arabicYearsWord(n) {
+  if (n === 1) return "سنة";
+  if (n === 2) return "سنتان";
+  if (n >= 3 && n <= 10) return `${n} سنوات`;
+  return `${n} سنة`;
+}
+
+// The auto-calculated years-of-experience line shown in the header/contact
+// line: a whole number of years is stated directly; a partial year rounds
+// to the nearest whole year and is prefixed "about"/"تقريبًا" (a rounded
+// figure is inherently approximate). Rounds to 0 (and is omitted, same as
+// no experience at all) below 6 months.
+function formatYearsOfExperiencePhrase(totalMonths, lang) {
+  if (!totalMonths || totalMonths < 6) return "";
+  const wholeYears = Math.floor(totalMonths / 12);
+  const remainder = totalMonths % 12;
+  const isApprox = remainder > 0;
+  const years = isApprox && remainder >= 6 ? wholeYears + 1 : wholeYears;
+  if (years <= 0) return "";
+  if (lang === "en") {
+    const unit = years === 1 ? "year" : "years";
+    return isApprox ? `about ${years} ${unit} experience` : `${years} ${unit} experience`;
+  }
+  const word = arabicYearsWord(years);
+  return isApprox ? `تقريبًا ${word} خبرة` : `${word} خبرة`;
 }
 
 // Keeps a GPA input to digits and at most one decimal point — no letters,
@@ -652,7 +713,7 @@ export default function AtsCvBuilder({ accessCode }) {
     const hasPersonal = !!(
       form.name?.trim() || form.phone?.trim() || form.email?.trim() ||
       form.cityChoice || form.cityCustom?.trim() || form.linkedin?.trim() ||
-      form.yearsOfExperience?.trim() || form.summary?.trim()
+      form.summary?.trim()
     );
     const hasExperiences = experiences.some((x) => x.title?.trim() || x.employer?.trim() || (x.bullets || []).some((b) => b.trim()));
     const hasEducation = education.some((x) => x.degreeChoice || x.schoolChoice || x.specializationChoice || x.year?.trim());
@@ -1077,10 +1138,13 @@ export default function AtsCvBuilder({ accessCode }) {
         setTags(tags.slice(0, -1));
       }
     };
-    const suggestions = opts.suggestions
+    // Named distinctly from the component-level `suggestions` AI-results
+    // state (read below, in the opts.suggest block) — this is only the
+    // static dropdown-list filtering, an unrelated, older feature.
+    const dropdownSuggestions = opts.suggestions
       ? opts.suggestions.filter((s) => !tags.includes(s) && (!draft || s.toLowerCase().includes(draft.toLowerCase()))).slice(0, 8)
       : [];
-    const isOpen = openDropdown === id && suggestions.length > 0;
+    const isOpen = openDropdown === id && dropdownSuggestions.length > 0;
     return (
       <div style={{ marginBottom: 14, position: "relative" }}>
         <label style={labelStyle}>{label}</label>
@@ -1103,13 +1167,40 @@ export default function AtsCvBuilder({ accessCode }) {
         </div>
         {isOpen && (
           <div style={dropdownListStyle}>
-            {suggestions.map((s) => (
+            {dropdownSuggestions.map((s) => (
               <div key={s} onMouseDown={(e) => { e.preventDefault(); addSuggestion(s); }} style={dropdownItemStyle}>{s}</div>
             ))}
           </div>
         )}
         {langGuardNotice(id)}
         {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
+        {opts.suggest && (
+          <div style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={() => suggestSkillsForField(id, opts.suggest.kind, opts.suggest.context)}
+              disabled={suggestions[id]?.loading}
+              style={{ ...suggestBtnStyle, opacity: suggestions[id]?.loading ? 0.7 : 1 }}
+            >
+              {suggestions[id]?.loading ? <><Loader2 size={14} className="spin" /> {t.suggestLoading}</> : t.suggestSkills}
+            </button>
+            {suggestions[id]?.error && <div style={warnStyle}>{suggestions[id].error}</div>}
+            {!!suggestions[id]?.items?.length && (
+              <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {suggestions[id].items.filter((s) => !tags.includes(s)).map((s, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => addSuggestion(s)}
+                    style={{ ...btnIcon, background: THEME.soft, border: `1px solid ${THEME.border}`, borderRadius: 16, padding: "5px 12px", fontSize: 12, fontWeight: 600, color: THEME.text, display: "inline-flex", alignItems: "center", gap: 4 }}
+                  >
+                    <Plus size={12} /> {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -1122,6 +1213,26 @@ export default function AtsCvBuilder({ accessCode }) {
     setSuggestions((prev) => ({ ...prev, [id]: { loading: true, error: "", items: prev[id]?.items || [] } }));
     try {
       const res = await fetch("/api/suggest-points", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lang: cvLang, kind, ...context }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(data.suggestions)) throw new Error(data.error || "suggest failed");
+      setSuggestions((prev) => ({ ...prev, [id]: { loading: false, error: "", items: data.suggestions } }));
+    } catch {
+      setSuggestions((prev) => ({ ...prev, [id]: { loading: false, error: t.suggestError, items: prev[id]?.items || [] } }));
+    }
+  }
+
+  // Same shape as suggestForField above, but hits /api/suggest-skills (a
+  // short skill-name list, not full sentences) and — unlike bullets/
+  // achievements — a tapped suggestion is added directly as a tag (see the
+  // tagsInput opts.suggest block above), not appended to a review list.
+  async function suggestSkillsForField(id, kind, context) {
+    setSuggestions((prev) => ({ ...prev, [id]: { loading: true, error: "", items: prev[id]?.items || [] } }));
+    try {
+      const res = await fetch("/api/suggest-skills", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lang: cvLang, kind, ...context }),
@@ -1221,7 +1332,6 @@ export default function AtsCvBuilder({ accessCode }) {
     phone: "",
     cityChoice: "",
     cityCustom: "",
-    yearsOfExperience: "",
     linkedin: "",
     displayPhone: "",
     summary: "",
@@ -1252,6 +1362,13 @@ export default function AtsCvBuilder({ accessCode }) {
   ]);
   const [techSkillTags, setTechSkillTags] = useState(saved?.techSkillTags ?? []);
   const [softSkillTags, setSoftSkillTags] = useState(saved?.softSkillTags ?? []);
+  // Only ever read/required when the CV is sparse (no experience) — see
+  // isSparseCv/SPARSE_SKILLS_MINIMUM. Keyed by skill name rather than
+  // folded into the tag arrays themselves, so every existing skill-related
+  // code path (tagsInput, extraction mapping, non-sparse rendering) stays
+  // completely untouched for the common case.
+  const [techSkillDescriptions, setTechSkillDescriptions] = useState(saved?.techSkillDescriptions ?? {});
+  const [softSkillDescriptions, setSoftSkillDescriptions] = useState(saved?.softSkillDescriptions ?? {});
   const [languageEntries, setLanguageEntries] = useState(saved?.languageEntries ?? [{ langChoice: "", langCustom: "", level: "" }]);
   const [tagDrafts, setTagDrafts] = useState({});
 
@@ -1275,11 +1392,11 @@ export default function AtsCvBuilder({ accessCode }) {
     try {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed, sourceChosen,
-        form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries,
+        form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, techSkillDescriptions, softSkillDescriptions, languageEntries,
         courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot, summaryEdited,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot, summaryEdited]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, techSkillDescriptions, softSkillDescriptions, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot, summaryEdited]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -1344,12 +1461,18 @@ export default function AtsCvBuilder({ accessCode }) {
   };
 
   const canProceed = () => {
-    if (step === 0) return !!(form.name && form.phone && targetRoles.length > 0);
-    if (step === 1) return !experiences.some(dateRangeInvalid);
+    if (step === 0) return !!(form.name && form.phone && targetRoles.length > 0) && isValidNamePartCount(form.name);
+    if (step === 1) return !experiences.some(dateRangeInvalid) && experiences.every(isExperienceEntryComplete);
     if (step === 2) {
       return education.every((x) => x.schoolChoice !== OTHER || x.schoolCustom.trim())
         && !education.some((x) => gpaExceedsScale(x.gpaValue, x.gpaScale));
     }
+    if (step === 3 && isSparseCv(experiences)) {
+      const techOk = techSkillTags.length >= SPARSE_SKILLS_MINIMUM && techSkillTags.every((s) => techSkillDescriptions[s]?.trim());
+      const softOk = softSkillTags.length >= SPARSE_SKILLS_MINIMUM && softSkillTags.every((s) => softSkillDescriptions[s]?.trim());
+      return techOk && softOk;
+    }
+    if (step === 4) return courses.every(isCourseEntryComplete);
     return true;
   };
 
@@ -1364,14 +1487,22 @@ export default function AtsCvBuilder({ accessCode }) {
   function findMissingRequiredFields() {
     const issues = [];
     if (!form.name?.trim()) issues.push({ step: 0, message: L.nameLabel });
+    else if (!isValidNamePartCount(form.name)) issues.push({ step: 0, message: t.nameThreePartsError });
     if (!form.phone?.trim()) issues.push({ step: 0, message: L.phoneLabel });
     if (!targetRoles.length) issues.push({ step: 0, message: L.targetRolesLabel });
     if (experiences.some(dateRangeInvalid)) issues.push({ step: 1, message: L.dateOrderError });
+    if (experiences.some((x) => !isExperienceEntryComplete(x))) issues.push({ step: 1, message: t.experienceIncompleteError });
     if (education.some((x) => x.schoolChoice === OTHER && !x.schoolCustom.trim())) {
       issues.push({ step: 2, message: L.universityOtherRequired });
     }
     if (education.some((x) => gpaExceedsScale(x.gpaValue, x.gpaScale))) {
       issues.push({ step: 2, message: L.gpaExceedsScaleError });
+    }
+    if (courses.some((c) => !isCourseEntryComplete(c))) issues.push({ step: 4, message: t.courseProviderRequiredError });
+    if (isSparseCv(experiences)) {
+      const techOk = techSkillTags.length >= SPARSE_SKILLS_MINIMUM && techSkillTags.every((s) => techSkillDescriptions[s]?.trim());
+      const softOk = softSkillTags.length >= SPARSE_SKILLS_MINIMUM && softSkillTags.every((s) => softSkillDescriptions[s]?.trim());
+      if (!techOk || !softOk) issues.push({ step: 3, message: t.sparseSkillsMinimumError });
     }
     return issues;
   }
@@ -1420,7 +1551,6 @@ export default function AtsCvBuilder({ accessCode }) {
       cityChoice: cityMatch.choice,
       cityCustom: cityMatch.custom,
       linkedin: String(extracted.linkedin || "").trim(),
-      yearsOfExperience: String(extracted.yearsOfExperience || "").trim(),
     }));
 
     if (Array.isArray(extracted.targetRoles) && extracted.targetRoles.length) {
@@ -1613,13 +1743,9 @@ export default function AtsCvBuilder({ accessCode }) {
       // above) — a number and a fixed 4-or-5 scale have no language
       // content to translate, so there's nothing to batch here anymore.
     }));
-    // Same reasoning as GPA above — "yearsOfExperience" is frequently a
-    // descriptive phrase (e.g. "أكثر من ثماني سنوات", "5+ years") rather
-    // than a bare number, and gets concatenated with a target-language
-    // "years experience" / "سنوات خبرة" label on the CV, so it must be
-    // translated too or it leaves stray source-language text behind.
-    const yearsOfExperienceRaw = String(extracted.yearsOfExperience || "").trim();
-    const yearsOfExperienceIdx = yearsOfExperienceRaw ? push(yearsOfExperienceRaw) : -1;
+    // No batch entry for years-of-experience — it's no longer a free-text
+    // field; it's auto-calculated from the (already-translated) experience
+    // dates, so there's nothing left to translate here.
     const langSlots = languageMatches.map((l) => (l.langMatch.choice === OTHER && l.langMatch.custom ? push(l.langMatch.custom) : -1));
     const techSlots = techSkillMatches.map((m) => (m.choice === OTHER && m.custom ? push(m.custom) : -1));
     const softSlots = softSkillMatches.map((m) => (m.choice === OTHER && m.custom ? push(m.custom) : -1));
@@ -1666,7 +1792,6 @@ export default function AtsCvBuilder({ accessCode }) {
       cityChoice: cityMatch.choice,
       cityCustom: cityMatch.choice === OTHER ? at(cityCustomIdx, cityMatch.custom) : cityMatch.custom,
       linkedin: String(extracted.linkedin || "").trim(),
-      yearsOfExperience: at(yearsOfExperienceIdx, yearsOfExperienceRaw),
     }));
 
     if (targetRolesBase.length) {
@@ -1939,18 +2064,26 @@ export default function AtsCvBuilder({ accessCode }) {
   // ── Validation (gentle, non-blocking) ──
   const phoneValid = !form.phone || PHONE_RE.test(form.phone.replace(/[\s-]/g, ""));
   const emailValid = !form.email || EMAIL_RE.test(form.email.trim());
+  const nameValid = isValidNamePartCount(form.name);
   const phoneError = !phoneValid && (cvLang === "en" ? "Enter a valid Saudi number (+9665XXXXXXXX or 05XXXXXXXX)." : "أدخل رقماً سعودياً صحيحاً (+9665XXXXXXXX أو 05XXXXXXXX).");
   const emailError = !emailValid && (cvLang === "en" ? "Enter a valid email address." : "الرجاء إدخال بريد إلكتروني صحيح.");
+  const nameError = !nameValid && t.nameThreePartsError;
 
   // ── Derived plain values fed to the (untouched) preview + PDF generator ──
   const cityValue = form.cityChoice === OTHER ? form.cityCustom : form.cityChoice;
   // The number shown ON the CV is the main contact number, unless the user
   // explicitly opted into a separate CV-only number.
   const cvPhoneValue = useAltCvPhone && form.displayPhone ? form.displayPhone : form.phone;
+  // Auto-calculated from the experience entries themselves (see
+  // calculateTotalExperienceMonths/formatYearsOfExperiencePhrase above) —
+  // there's no manual "years of experience" field anymore, so this is
+  // always in sync with what's actually on the CV and can't drift into the
+  // duplicated-label bug the old manual/extracted value was prone to.
+  const computedYearsOfExperience = formatYearsOfExperiencePhrase(calculateTotalExperienceMonths(experiences), cvLang);
   // Single clean "email | phone | city | LinkedIn | years experience" line —
   // no dedicated headline field is collected, so the professional title
   // under the name is simply the most recent role's job title, if any.
-  const contactLineParts = [form.email, cvPhoneValue, cityValue, form.linkedin, form.yearsOfExperience && formatYearsLine(form.yearsOfExperience, t.yearsOfExperience)].filter(Boolean);
+  const contactLineParts = [form.email, cvPhoneValue, cityValue, form.linkedin, computedYearsOfExperience].filter(Boolean);
 
   // Resolves an AI-enhanceable item to whatever it should actually show/
   // export as right now: the AI version, a manual edit, or a reverted-to-
@@ -1965,8 +2098,12 @@ export default function AtsCvBuilder({ accessCode }) {
   // still be matched back to their stable "exp-{origIndex}-bullet-{j}" key.
   const displayExperiences = sortExperiencesDesc(experiences.map((x, i) => ({ ...x, _origIndex: i }))).map((x) => ({
     _origIndex: x._origIndex,
-    title: x.title,
-    employer: x.employer,
+    // Employer + job title render in ALL CAPS on English CVs only (Arabic
+    // has no case distinction, so this never applies there) — display-only:
+    // the underlying stored value stays normal case, so re-editing the
+    // form always shows what was actually typed.
+    title: cvLang === "en" ? (x.title || "").toUpperCase() : x.title,
+    employer: cvLang === "en" ? (x.employer || "").toUpperCase() : x.employer,
     period: formatPeriod(x, cvLang),
     // Joined back into the newline-per-point string the (untouched) PDF
     // template already expects — the structured list is purely a form-UX
@@ -2026,6 +2163,31 @@ export default function AtsCvBuilder({ accessCode }) {
 
   const techSkillsStr = techSkillTags.join(sep);
   const softSkillsStr = softSkillTags.join(sep);
+  // Only populated for a sparse CV (rule #7) — carries each skill's
+  // description through to the server for both validation (min 5+5, each
+  // described) and PDF/Word rendering (skills-with-descriptions bullets).
+  // Empty for every normal CV, so nothing changes for the common case.
+  const skillDetails = isSparseCv(experiences)
+    ? {
+        tech: techSkillTags.map((s) => ({ name: s, description: techSkillDescriptions[s] || "" })),
+        soft: softSkillTags.map((s) => ({ name: s, description: softSkillDescriptions[s] || "" })),
+      }
+    : { tech: [], soft: [] };
+
+  // Context for the AI skill-suggestion buttons (rule #6) — job title +
+  // experience + education + target role, matching what the route expects.
+  const skillSuggestExperienceSummary = experiences
+    .filter((x) => x.title?.trim() || x.employer?.trim())
+    .map((x) => [x.title, x.employer, (x.bullets || []).filter((b) => b.trim()).join("; ")].filter(Boolean).join(" — "))
+    .join("\n");
+  const skillSuggestEducationSummary = education
+    .filter((x) => x.degreeChoice || x.schoolChoice || x.specializationChoice)
+    .map((x) => [
+      x.degreeChoice === OTHER ? x.degreeCustom : x.degreeChoice,
+      x.specializationChoice === OTHER ? x.specializationCustom : x.specializationChoice,
+      x.schoolChoice === OTHER ? x.schoolCustom : x.schoolChoice,
+    ].filter(Boolean).join(" — "))
+    .join("\n");
   // "أخرى/Other" resolves to its typed-in custom text; never rendered into
   // the PDF (see form.targetCities below) — only shown in the admin/Staff1
   // panels, same treatment as targetRoles.
@@ -2080,19 +2242,26 @@ export default function AtsCvBuilder({ accessCode }) {
         // lib/cvHtmlTemplate.js / lib/cvDocxTemplate.js — none render these).
         targetCities: targetCitiesStr,
         internalNotes,
-        yearsOfExperience: form.yearsOfExperience,
+        yearsOfExperience: computedYearsOfExperience,
         linkedin: form.linkedin,
         summary: form.summary,
         achievements: displayAchievementsStr,
         languages: languagesStr,
       },
       experiences: displayExperiences,
+      // Alongside the display-formatted experiences above (title/employer/
+      // period/bullets) — the server-side quality-rule validation needs the
+      // raw date fields (fromMonth/fromYear/toMonth/toYear/current), which
+      // displayExperiences doesn't carry. Never rendered into the CV.
+      rawExperiences: experiences,
       education: displayEducation,
       courses: displayCourses,
       certifications: displayCertifications,
       customSections: displayCustomSections,
       techSkills: techSkillsStr,
       softSkills: softSkillsStr,
+      // Only non-empty for a sparse CV (rule #7) — see skillDetails above.
+      skillDetails,
       lang: cvLang,
       accessCode,
     };
@@ -2209,7 +2378,7 @@ export default function AtsCvBuilder({ accessCode }) {
     return JSON.stringify({
       lang: cvLang,
       targetRoles: targetRoles.join(sep),
-      yearsOfExperience: form.yearsOfExperience,
+      yearsOfExperience: computedYearsOfExperience,
       experiences: experiences.map((x) => ({
         title: x.title, employer: x.employer, period: formatPeriod(x, cvLang),
         bullets: (x.bullets || []).map((b) => b.trim()).filter(Boolean).join("\n"),
@@ -2243,7 +2412,7 @@ export default function AtsCvBuilder({ accessCode }) {
         body: JSON.stringify({
           lang: cvLang,
           targetRoles: targetRoles.join(sep),
-          yearsOfExperience: form.yearsOfExperience,
+          yearsOfExperience: computedYearsOfExperience,
           experiences: displayExperiences,
           education: displayEducation,
           achievements: displayAchievementsStr,
@@ -3065,7 +3234,7 @@ export default function AtsCvBuilder({ accessCode }) {
             <>
               <SectionTitle>البيانات الشخصية والهدف الوظيفي</SectionTitle>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                {field("name", "الاسم الكامل", form.name, set("name"), { req: true, ph: "عادل علي الأجاجي" })}
+                {field("name", "الاسم الكامل", form.name, set("name"), { req: true, ph: "عادل علي الأجاجي", error: nameError })}
                 {field("email", "البريد الإلكتروني", form.email, set("email"), { ph: "name@email.com", error: emailError })}
                 {field("phone", "رقم الجوال", form.phone, set("phone"), { req: true, ph: "+9665xxxxxxxx", error: phoneError })}
                 {selectWithOther(
@@ -3075,7 +3244,6 @@ export default function AtsCvBuilder({ accessCode }) {
                   cityOptions
                 )}
                 {field("linkedin", "رابط LinkedIn (اختياري)", form.linkedin, set("linkedin"), { ph: "https://linkedin.com/in/name" })}
-                {field("yearsOfExperience", "عدد سنوات الخبرة (اختياري)", form.yearsOfExperience, set("yearsOfExperience"), { ph: "5", numeric: true })}
               </div>
 
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: THEME.text, marginBottom: 14, cursor: "pointer" }}>
@@ -3164,12 +3332,13 @@ export default function AtsCvBuilder({ accessCode }) {
                       context: {
                         jobTitle: x.title || "",
                         employer: x.employer || "",
-                        yearsOfExperience: form.yearsOfExperience || "",
+                        yearsOfExperience: computedYearsOfExperience,
                         specialization: (education[0]?.specializationChoice === OTHER ? education[0]?.specializationCustom : education[0]?.specializationChoice) || "",
                         targetRole: targetRoles.join(sep),
                       },
                     },
                   })}
+                  {!isExperienceEntryComplete(x) && <div style={{ ...warnStyle, marginTop: 10 }}>{t.experienceIncompleteError}</div>}
                 </div>
               ))}
               <button onClick={addExp} style={btnAdd}><Plus size={16} /> {L.addExp}</button>
@@ -3245,8 +3414,49 @@ export default function AtsCvBuilder({ accessCode }) {
           {step === 3 && (
             <>
               <SectionTitle>{L.skillsHeading}</SectionTitle>
-              {tagsInput("techSkills", L.techSkillsLabel, techSkillTags, setTechSkillTags, { ph: L.techSkillsPh, hint: L.techSkillsHint, suggestions: techSkillSuggestions })}
-              {tagsInput("softSkills", L.softSkillsLabel, softSkillTags, setSoftSkillTags, { ph: L.techSkillsPh, suggestions: softSkillSuggestions })}
+              {isSparseCv(experiences) && <div style={{ ...warnStyle, marginBottom: 14 }}>{t.sparseSkillsHint}</div>}
+              {tagsInput("techSkills", L.techSkillsLabel, techSkillTags, setTechSkillTags, {
+                ph: L.techSkillsPh, hint: L.techSkillsHint, suggestions: techSkillSuggestions,
+                suggest: {
+                  kind: "technical",
+                  context: {
+                    jobTitle: cvHeadline || "",
+                    experienceSummary: skillSuggestExperienceSummary,
+                    educationSummary: skillSuggestEducationSummary,
+                    targetRoles: targetRoles.join(sep),
+                    existingSkills: techSkillsStr,
+                  },
+                },
+              })}
+              {tagsInput("softSkills", L.softSkillsLabel, softSkillTags, setSoftSkillTags, {
+                ph: L.techSkillsPh, suggestions: softSkillSuggestions,
+                suggest: {
+                  kind: "soft",
+                  context: {
+                    jobTitle: cvHeadline || "",
+                    experienceSummary: skillSuggestExperienceSummary,
+                    educationSummary: skillSuggestEducationSummary,
+                    targetRoles: targetRoles.join(sep),
+                    existingSkills: softSkillsStr,
+                  },
+                },
+              })}
+              {isSparseCv(experiences) && (techSkillTags.length > 0 || softSkillTags.length > 0) && (
+                <div style={{ marginBottom: 24 }}>
+                  <label style={labelStyle}>{t.skillDescriptionPlaceholder}</label>
+                  {[...techSkillTags.map((s) => ({ s, set: setTechSkillDescriptions, val: techSkillDescriptions })), ...softSkillTags.map((s) => ({ s, set: setSoftSkillDescriptions, val: softSkillDescriptions }))].map(({ s, set: setDesc, val }, i) => (
+                    <div key={`${s}-${i}`} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: THEME.secondary, marginBottom: 4 }}>{s}</div>
+                      <input
+                        value={val[s] || ""}
+                        onChange={(e) => setDesc((prev) => ({ ...prev, [s]: e.target.value }))}
+                        placeholder={t.skillDescriptionPlaceholder}
+                        style={inputStyle}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <label style={labelStyle}>{L.languagesLabel}</label>
               {languageEntries.map((l, i) => (
@@ -3285,7 +3495,7 @@ export default function AtsCvBuilder({ accessCode }) {
                     kind: "achievements",
                     context: {
                       jobTitle: cvHeadline || "",
-                      yearsOfExperience: form.yearsOfExperience || "",
+                      yearsOfExperience: computedYearsOfExperience,
                       specialization: (education[0]?.specializationChoice === OTHER ? education[0]?.specializationCustom : education[0]?.specializationChoice) || "",
                       targetRole: targetRoles.join(sep),
                     },
@@ -3321,6 +3531,7 @@ export default function AtsCvBuilder({ accessCode }) {
                       {L.courseLicenseToggle}
                     </label>
                     {x.hasLicense && field(`course-${i}-license`, L.courseLicenseLabel, x.licenseNumber, setCourse(i, "licenseNumber"), {})}
+                    {!isCourseEntryComplete(x) && <div style={{ ...warnStyle, marginTop: 10 }}>{t.courseProviderRequiredError}</div>}
                   </div>
                 ))}
                 <button onClick={addCourse} style={{ ...btnAdd, marginTop: 12 }}><Plus size={16} /> {L.addCourse}</button>
@@ -3416,15 +3627,25 @@ export default function AtsCvBuilder({ accessCode }) {
             )}
           </div>
           {step === 0 && !canProceed() && (
-            <div style={{ marginTop: 12, fontSize: 12, color: THEME.text, textAlign: "center" }}>* الاسم والجوال والوظيفة المستهدفة مطلوبة للمتابعة</div>
+            <div style={{ marginTop: 12, fontSize: 12, color: form.name?.trim() && !nameValid ? "#b3261e" : THEME.text, textAlign: "center" }}>
+              {form.name?.trim() && !nameValid ? nameError : "* الاسم والجوال والوظيفة المستهدفة مطلوبة للمتابعة"}
+            </div>
           )}
           {step === 1 && !canProceed() && (
-            <div style={{ marginTop: 12, fontSize: 12, color: "#b3261e", textAlign: "center" }}>{L.dateOrderError}</div>
+            <div style={{ marginTop: 12, fontSize: 12, color: "#b3261e", textAlign: "center" }}>
+              {experiences.some(dateRangeInvalid) ? L.dateOrderError : t.experienceIncompleteError}
+            </div>
           )}
           {step === 2 && !canProceed() && (
             <div style={{ marginTop: 12, fontSize: 12, color: "#b3261e", textAlign: "center" }}>
               {education.some((x) => gpaExceedsScale(x.gpaValue, x.gpaScale)) ? L.gpaExceedsScaleError : L.universityOtherRequired}
             </div>
+          )}
+          {step === 3 && !canProceed() && (
+            <div style={{ marginTop: 12, fontSize: 12, color: "#b3261e", textAlign: "center" }}>{t.sparseSkillsMinimumError}</div>
+          )}
+          {step === 4 && !canProceed() && (
+            <div style={{ marginTop: 12, fontSize: 12, color: "#b3261e", textAlign: "center" }}>{t.courseProviderRequiredError}</div>
           )}
         </div>
 

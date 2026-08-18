@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import puppeteer from "puppeteer-core";
 import { waitUntil } from "@vercel/functions";
 import { buildCvHtml } from "../../../lib/cvHtmlTemplate";
+import { getCvQualityIssues } from "../../../lib/cvQualityRules";
 import { archiveGeneratedPdf } from "../../../lib/cvArchive";
 import { notifyAdminStatusChange } from "../../../lib/adminStatusNotifications";
 import { getSql } from "../../../lib/db";
@@ -109,7 +110,7 @@ export async function POST(request) {
   let page;
   try {
     const body = await request.json();
-    const { form, experiences, education, courses, certifications, customSections, techSkills, softSkills, lang, accessCode } = body;
+    const { form, experiences, rawExperiences, education, courses, certifications, customSections, techSkills, softSkills, skillDetails, lang, accessCode } = body;
 
     const code = typeof accessCode === "string" ? accessCode.trim() : "";
     if (!code) {
@@ -129,6 +130,27 @@ export async function POST(request) {
     if (!form?.name?.trim()) missingFields.push(lang === "en" ? "Full Name" : "الاسم الكامل");
     if (!form?.phone?.trim()) missingFields.push(lang === "en" ? "Phone Number" : "رقم الجوال");
     if (!form?.targetRoles?.trim()) missingFields.push(lang === "en" ? "Target Role(s)" : "الوظيفة/الوظائف المستهدفة");
+
+    // Server-side re-check of the CV-quality batch's mandatory rules (see
+    // lib/cvQualityRules.js — the same module the client uses, so the two
+    // can never drift). rawExperiences carries the raw date fields the
+    // display-formatted `experiences` above doesn't (it's already reduced
+    // to a "period" string); skillDetails is only ever non-empty for a
+    // sparse CV (no experience), matching the client's own gating.
+    const qualityIssues = getCvQualityIssues({
+      name: form?.name,
+      experiences: rawExperiences || [],
+      courses: courses || [],
+      techSkillTags: (skillDetails?.tech || []).map((s) => s.name),
+      softSkillTags: (skillDetails?.soft || []).map((s) => s.name),
+      techSkillDescriptions: Object.fromEntries((skillDetails?.tech || []).map((s) => [s.name, s.description])),
+      softSkillDescriptions: Object.fromEntries((skillDetails?.soft || []).map((s) => [s.name, s.description])),
+    });
+    if (qualityIssues.includes("nameParts")) missingFields.push(lang === "en" ? "Full Name (exactly 3 parts)" : "الاسم الكامل (ثلاثة أجزاء بالضبط)");
+    if (qualityIssues.includes("experienceIncomplete")) missingFields.push(lang === "en" ? "Experience entries (every field)" : "الخبرات العملية (جميع الحقول)");
+    if (qualityIssues.includes("courseProvider")) missingFields.push(lang === "en" ? "Course issuing body" : "الجهة المانحة للدورة التدريبية");
+    if (qualityIssues.includes("sparseSkillsMinimum")) missingFields.push(lang === "en" ? "Skills (min. 5 technical + 5 professional, each described)" : "المهارات (5 تقنية و5 مهنية على الأقل، مع وصف لكل مهارة)");
+
     if (missingFields.length) {
       const message = lang === "en"
         ? `Cannot export an incomplete CV. Missing required field(s): ${missingFields.join(", ")}.`
@@ -164,7 +186,7 @@ export async function POST(request) {
     const splitLines = (t) => t.split("\n").map((l) => l.trim()).filter(Boolean);
     const splitList = (t) => t.split(/[،,\n]/).map((l) => l.trim()).filter(Boolean);
 
-    const html = buildCvHtml({ form, experiences, education, courses, certifications, customSections, techSkills, softSkills, splitLines, splitList, lang });
+    const html = buildCvHtml({ form, experiences, education, courses, certifications, customSections, techSkills, softSkills, skillDetails, splitLines, splitList, lang });
 
     let tMark = Date.now();
     const browser = await getBrowser();

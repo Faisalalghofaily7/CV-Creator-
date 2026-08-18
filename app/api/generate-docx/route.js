@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Packer } from "docx";
 import { waitUntil } from "@vercel/functions";
 import { buildCvDocx } from "../../../lib/cvDocxTemplate";
+import { getCvQualityIssues } from "../../../lib/cvQualityRules";
 import { archiveGeneratedDocx } from "../../../lib/docxArchive";
 import { getSql } from "../../../lib/db";
 
@@ -16,7 +17,7 @@ export const maxDuration = 30;
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { form, experiences, education, courses, certifications, customSections, techSkills, softSkills, lang, accessCode } = body;
+    const { form, experiences, rawExperiences, education, courses, certifications, customSections, techSkills, softSkills, skillDetails, lang, accessCode } = body;
 
     const code = typeof accessCode === "string" ? accessCode.trim() : "";
     if (!code) {
@@ -30,6 +31,25 @@ export async function POST(request) {
     if (!form?.name?.trim()) missingFields.push(lang === "en" ? "Full Name" : "الاسم الكامل");
     if (!form?.phone?.trim()) missingFields.push(lang === "en" ? "Phone Number" : "رقم الجوال");
     if (!form?.targetRoles?.trim()) missingFields.push(lang === "en" ? "Target Role(s)" : "الوظيفة/الوظائف المستهدفة");
+
+    // Same CV-quality re-check generate-pdf/route.js does, via the same
+    // shared lib/cvQualityRules.js — a pure, PDF-unrelated module (like
+    // lib/cvLabels.js, already shared by both templates), so importing it
+    // here doesn't touch anything on the PDF path.
+    const qualityIssues = getCvQualityIssues({
+      name: form?.name,
+      experiences: rawExperiences || [],
+      courses: courses || [],
+      techSkillTags: (skillDetails?.tech || []).map((s) => s.name),
+      softSkillTags: (skillDetails?.soft || []).map((s) => s.name),
+      techSkillDescriptions: Object.fromEntries((skillDetails?.tech || []).map((s) => [s.name, s.description])),
+      softSkillDescriptions: Object.fromEntries((skillDetails?.soft || []).map((s) => [s.name, s.description])),
+    });
+    if (qualityIssues.includes("nameParts")) missingFields.push(lang === "en" ? "Full Name (exactly 3 parts)" : "الاسم الكامل (ثلاثة أجزاء بالضبط)");
+    if (qualityIssues.includes("experienceIncomplete")) missingFields.push(lang === "en" ? "Experience entries (every field)" : "الخبرات العملية (جميع الحقول)");
+    if (qualityIssues.includes("courseProvider")) missingFields.push(lang === "en" ? "Course issuing body" : "الجهة المانحة للدورة التدريبية");
+    if (qualityIssues.includes("sparseSkillsMinimum")) missingFields.push(lang === "en" ? "Skills (min. 5 technical + 5 professional, each described)" : "المهارات (5 تقنية و5 مهنية على الأقل، مع وصف لكل مهارة)");
+
     if (missingFields.length) {
       const message = lang === "en"
         ? `Cannot export an incomplete CV. Missing required field(s): ${missingFields.join(", ")}.`
@@ -58,7 +78,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "الكود غير صالح." }, { status: 404 });
     }
 
-    const doc = buildCvDocx({ form, experiences, education, courses, certifications, customSections, techSkills, softSkills, lang });
+    const doc = buildCvDocx({ form, experiences, education, courses, certifications, customSections, techSkills, softSkills, skillDetails, lang });
     const buffer = await Packer.toBuffer(doc);
 
     // Best-effort archival for the admin panel — never blocks or affects
