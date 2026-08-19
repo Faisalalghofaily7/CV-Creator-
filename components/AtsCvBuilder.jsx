@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon, Layers, Upload } from "lucide-react";
 import { CV_LABELS } from "../lib/cvLabels";
-import { getCvQualityIssues, isValidNamePartCount, isExperienceEntryComplete, isCourseEntryComplete, isSparseCv, SPARSE_SKILLS_MINIMUM } from "../lib/cvQualityRules";
+import { getCvQualityIssues, isValidNamePartCount, isExperienceEntryComplete, areExperienceCoreFieldsComplete, isCourseEntryComplete, isSparseCv, SPARSE_SKILLS_MINIMUM } from "../lib/cvQualityRules";
 
 // Persists in-progress form data across page refreshes. Keyed to the
 // access code so a *different* code (a new session) never inherits a
@@ -1250,6 +1250,7 @@ export default function AtsCvBuilder({ accessCode }) {
   // achievements so each entry is its own item instead of one free-text
   // blob the user has to format manually.
   function listInput(id, label, items, setItems, opts = {}) {
+    const locked = !!opts.disabled;
     const move = (i, dir) => {
       const j = i + dir;
       if (j < 0 || j >= items.length) return;
@@ -1260,7 +1261,8 @@ export default function AtsCvBuilder({ accessCode }) {
     return (
       <div style={{ marginBottom: 14 }}>
         <label style={labelStyle}>{label}</label>
-        {items.map((val, i) => {
+        {locked && <div style={hintStyle}>{opts.lockedHint}</div>}
+        {!locked && items.map((val, i) => {
           const itemId = `${id}-${i}`;
           return (
             <div key={i} style={{ marginBottom: 8 }}>
@@ -1288,21 +1290,21 @@ export default function AtsCvBuilder({ accessCode }) {
             </div>
           );
         })}
-        <button type="button" onClick={() => setItems([...items, ""])} style={btnAdd}><Plus size={16} /> {opts.addLabel}</button>
-        {opts.hint && <div style={hintStyle}>{opts.hint}</div>}
+        <button type="button" onClick={() => setItems([...items, ""])} disabled={locked} style={{ ...btnAdd, opacity: locked ? 0.4 : 1, cursor: locked ? "not-allowed" : "pointer" }}><Plus size={16} /> {opts.addLabel}</button>
+        {!locked && opts.hint && <div style={hintStyle}>{opts.hint}</div>}
 
         {opts.suggest && (
           <div style={{ marginTop: 10 }}>
             <button
               type="button"
               onClick={() => suggestForField(id, opts.suggest.kind, opts.suggest.context)}
-              disabled={suggestions[id]?.loading}
-              style={{ ...suggestBtnStyle, opacity: suggestions[id]?.loading ? 0.7 : 1 }}
+              disabled={locked || suggestions[id]?.loading}
+              style={{ ...suggestBtnStyle, opacity: locked || suggestions[id]?.loading ? 0.5 : 1, cursor: locked ? "not-allowed" : "pointer" }}
             >
               {suggestions[id]?.loading ? <><Loader2 size={14} className="spin" /> {t.suggestLoading}</> : t.suggestForMe}
             </button>
-            {suggestions[id]?.error && <div style={warnStyle}>{suggestions[id].error}</div>}
-            {!!suggestions[id]?.items?.length && (
+            {!locked && suggestions[id]?.error && <div style={warnStyle}>{suggestions[id].error}</div>}
+            {!locked && !!suggestions[id]?.items?.length && (
               <div style={{ marginTop: 8, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: 12, background: THEME.soft }}>
                 <div style={{ ...hintStyle, marginTop: 0, marginBottom: 8 }}>{t.suggestGenericNote}</div>
                 {suggestions[id].items.map((s, i) => (
@@ -1362,13 +1364,18 @@ export default function AtsCvBuilder({ accessCode }) {
   ]);
   const [techSkillTags, setTechSkillTags] = useState(saved?.techSkillTags ?? []);
   const [softSkillTags, setSoftSkillTags] = useState(saved?.softSkillTags ?? []);
-  // Only ever read/required when the CV is sparse (no experience) — see
-  // isSparseCv/SPARSE_SKILLS_MINIMUM. Keyed by skill name rather than
-  // folded into the tag arrays themselves, so every existing skill-related
-  // code path (tagsInput, extraction mapping, non-sparse rendering) stays
-  // completely untouched for the common case.
+  // AI-generated, editable descriptions — for EVERY technical skill tag,
+  // regardless of experience (not sparse-only). Keyed by skill name rather
+  // than folded into the tag array itself, so every existing skill-related
+  // code path (tagsInput, extraction mapping) stays untouched. Professional/
+  // soft skills never carry a description at all (plain tags for everyone),
+  // so there is no soft equivalent of this map.
   const [techSkillDescriptions, setTechSkillDescriptions] = useState(saved?.techSkillDescriptions ?? {});
-  const [softSkillDescriptions, setSoftSkillDescriptions] = useState(saved?.softSkillDescriptions ?? {});
+  // Tracks which tech skills have already had an AI description attempt
+  // (success or failure) so the auto-generate effect below fires exactly
+  // once per tag and never clobbers a description the user has edited.
+  const [techDescGenerated, setTechDescGenerated] = useState(saved?.techDescGenerated ?? {});
+  const [techDescLoading, setTechDescLoading] = useState({});
   const [languageEntries, setLanguageEntries] = useState(saved?.languageEntries ?? [{ langChoice: "", langCustom: "", level: "" }]);
   const [tagDrafts, setTagDrafts] = useState({});
 
@@ -1392,11 +1399,11 @@ export default function AtsCvBuilder({ accessCode }) {
     try {
       window.sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({
         accessCode, step, preview, cvLang, langConfirmed, sourceChosen,
-        form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, techSkillDescriptions, softSkillDescriptions, languageEntries,
+        form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, techSkillDescriptions, techDescGenerated, languageEntries,
         courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot, summaryEdited,
       }));
     } catch {}
-  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, techSkillDescriptions, softSkillDescriptions, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot, summaryEdited]);
+  }, [accessCode, step, preview, cvLang, langConfirmed, sourceChosen, form, useAltCvPhone, targetRoles, targetCities, targetCitiesOther, internalNotes, experiences, education, techSkillTags, softSkillTags, techSkillDescriptions, techDescGenerated, languageEntries, courses, achievements, certifications, customSections, aiSummaryGenerated, itemsEnhanced, enhancedItems, translationApplied, summaryInputSnapshot, summaryEdited]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -1469,7 +1476,7 @@ export default function AtsCvBuilder({ accessCode }) {
     }
     if (step === 3 && isSparseCv(experiences)) {
       const techOk = techSkillTags.length >= SPARSE_SKILLS_MINIMUM && techSkillTags.every((s) => techSkillDescriptions[s]?.trim());
-      const softOk = softSkillTags.length >= SPARSE_SKILLS_MINIMUM && softSkillTags.every((s) => softSkillDescriptions[s]?.trim());
+      const softOk = softSkillTags.length >= SPARSE_SKILLS_MINIMUM;
       return techOk && softOk;
     }
     if (step === 4) return courses.every(isCourseEntryComplete);
@@ -1501,7 +1508,7 @@ export default function AtsCvBuilder({ accessCode }) {
     if (courses.some((c) => !isCourseEntryComplete(c))) issues.push({ step: 4, message: t.courseProviderRequiredError });
     if (isSparseCv(experiences)) {
       const techOk = techSkillTags.length >= SPARSE_SKILLS_MINIMUM && techSkillTags.every((s) => techSkillDescriptions[s]?.trim());
-      const softOk = softSkillTags.length >= SPARSE_SKILLS_MINIMUM && softSkillTags.every((s) => softSkillDescriptions[s]?.trim());
+      const softOk = softSkillTags.length >= SPARSE_SKILLS_MINIMUM;
       if (!techOk || !softOk) issues.push({ step: 3, message: t.sparseSkillsMinimumError });
     }
     return issues;
@@ -2163,16 +2170,15 @@ export default function AtsCvBuilder({ accessCode }) {
 
   const techSkillsStr = techSkillTags.join(sep);
   const softSkillsStr = softSkillTags.join(sep);
-  // Only populated for a sparse CV (rule #7) — carries each skill's
-  // description through to the server for both validation (min 5+5, each
-  // described) and PDF/Word rendering (skills-with-descriptions bullets).
-  // Empty for every normal CV, so nothing changes for the common case.
-  const skillDetails = isSparseCv(experiences)
-    ? {
-        tech: techSkillTags.map((s) => ({ name: s, description: techSkillDescriptions[s] || "" })),
-        soft: softSkillTags.map((s) => ({ name: s, description: softSkillDescriptions[s] || "" })),
-      }
-    : { tech: [], soft: [] };
+  // Technical skills always carry their (AI-generated, editable)
+  // description now — for every CV, not just a sparse one — so the server
+  // can validate (sparse minimum) and render description bullets
+  // unconditionally. Professional/soft skills never have descriptions, for
+  // anyone, so "soft" here only ever carries bare names.
+  const skillDetails = {
+    tech: techSkillTags.map((s) => ({ name: s, description: techSkillDescriptions[s] || "" })),
+    soft: softSkillTags.map((s) => ({ name: s })),
+  };
 
   // Context for the AI skill-suggestion buttons (rule #6) — job title +
   // experience + education + target role, matching what the route expects.
@@ -2188,6 +2194,60 @@ export default function AtsCvBuilder({ accessCode }) {
       x.schoolChoice === OTHER ? x.schoolCustom : x.schoolChoice,
     ].filter(Boolean).join(" — "))
     .join("\n");
+
+  // Fires an AI description for one technical skill — grounded in real
+  // experience when the applicant has any, otherwise honestly general
+  // (education + target role only, never fabricated work history). Purely
+  // additive/non-blocking: on failure the field is simply left blank and
+  // editable, exactly like a manually-typed description would be.
+  async function describeTechSkill(skillName) {
+    setTechDescLoading((prev) => ({ ...prev, [skillName]: true }));
+    try {
+      const res = await fetch("/api/describe-skill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lang: cvLang,
+          skillName,
+          jobTitle: cvHeadline || "",
+          hasExperience: !isSparseCv(experiences),
+          experienceSummary: skillSuggestExperienceSummary,
+          educationSummary: skillSuggestEducationSummary,
+          targetRoles: targetRoles.join(sep),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && typeof data.description === "string" && data.description.trim()) {
+        // Never overwrite text the user may have already typed in while
+        // this request was in flight.
+        setTechSkillDescriptions((prev) => (prev[skillName]?.trim() ? prev : { ...prev, [skillName]: data.description.trim() }));
+      }
+    } catch {
+      // Graceful no-op — the description field just stays blank/editable.
+    } finally {
+      setTechDescLoading((prev) => ({ ...prev, [skillName]: false }));
+      setTechDescGenerated((prev) => ({ ...prev, [skillName]: true }));
+    }
+  }
+
+  // Auto-generates a description for every technical skill tag that
+  // doesn't have one yet — covers every way a tag can be added (typed,
+  // dropdown-picked, AI-suggestion-tapped, or extracted from an uploaded
+  // CV) with one mechanism. Runs at most once per tag: a tag already
+  // carrying a (possibly reloaded/saved) description is marked generated
+  // without re-calling the AI, so a user's own edits are never clobbered.
+  useEffect(() => {
+    techSkillTags.forEach((s) => {
+      if (techDescGenerated[s] || techDescLoading[s]) return;
+      if (techSkillDescriptions[s]?.trim()) {
+        setTechDescGenerated((prev) => ({ ...prev, [s]: true }));
+        return;
+      }
+      describeTechSkill(s);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [techSkillTags]);
+
   // "أخرى/Other" resolves to its typed-in custom text; never rendered into
   // the PDF (see form.targetCities below) — only shown in the admin/Staff1
   // panels, same treatment as targetRoles.
@@ -2260,7 +2320,7 @@ export default function AtsCvBuilder({ accessCode }) {
       customSections: displayCustomSections,
       techSkills: techSkillsStr,
       softSkills: softSkillsStr,
-      // Only non-empty for a sparse CV (rule #7) — see skillDetails above.
+      // Technical skills' AI-generated descriptions — see skillDetails above.
       skillDetails,
       lang: cvLang,
       accessCode,
@@ -3022,9 +3082,20 @@ export default function AtsCvBuilder({ accessCode }) {
             {(techSkillTags.length > 0 || softSkillTags.length > 0) && (
               <Section title={t.skills}>
                 {techSkillTags.length > 0 && (
-                  <div style={{ marginBottom: 6 }}>
-                    <span style={skillCat}>{t.techSkills} </span>
-                    <span style={{ fontSize: 12.5, color: C.slate }}>{techSkillTags.join(" | ")}</span>
+                  <div style={{ marginBottom: softSkillTags.length > 0 ? 10 : 0 }}>
+                    <span style={skillCat}>{t.techSkills}</span>
+                    {techSkillTags.some((s) => techSkillDescriptions[s]?.trim()) ? (
+                      <ul style={{ margin: "4px 0 0", paddingInlineStart: 18 }}>
+                        {techSkillTags.map((s, i) => (
+                          <li key={i} style={{ fontSize: 12.5, color: C.slate, marginBottom: 2 }}>
+                            <strong style={{ color: C.ink }}>{s}</strong>
+                            {techSkillDescriptions[s]?.trim() ? ` — ${techSkillDescriptions[s].trim()}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span style={{ fontSize: 12.5, color: C.slate }}> {techSkillTags.join(" | ")}</span>
+                    )}
                   </div>
                 )}
                 {softSkillTags.length > 0 && (
@@ -3327,6 +3398,7 @@ export default function AtsCvBuilder({ accessCode }) {
 
                   {listInput(`exp-${i}-bullets`, L.bulletsLabel, x.bullets, (items) => setExp(i, "bullets")({ target: { value: items } }), {
                     ph: L.bulletsPh, addLabel: L.addBulletPoint, hint: L.bulletsHint,
+                    disabled: !areExperienceCoreFieldsComplete(x), lockedHint: t.expBulletsLockedHint,
                     suggest: {
                       kind: "bullets",
                       context: {
@@ -3428,6 +3500,23 @@ export default function AtsCvBuilder({ accessCode }) {
                   },
                 },
               })}
+              {techSkillTags.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <label style={labelStyle}>{t.techSkillDescriptionsHeading}</label>
+                  {techSkillTags.map((s, i) => (
+                    <div key={`${s}-${i}`} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: THEME.secondary, marginBottom: 4 }}>{s}</div>
+                      <input
+                        value={techSkillDescriptions[s] || ""}
+                        onChange={(e) => setTechSkillDescriptions((prev) => ({ ...prev, [s]: e.target.value }))}
+                        placeholder={techDescLoading[s] ? t.skillDescriptionGenerating : t.skillDescriptionPlaceholder}
+                        disabled={!!techDescLoading[s]}
+                        style={{ ...inputStyle, opacity: techDescLoading[s] ? 0.6 : 1 }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
               {tagsInput("softSkills", L.softSkillsLabel, softSkillTags, setSoftSkillTags, {
                 ph: L.techSkillsPh, suggestions: softSkillSuggestions,
                 suggest: {
@@ -3441,22 +3530,6 @@ export default function AtsCvBuilder({ accessCode }) {
                   },
                 },
               })}
-              {isSparseCv(experiences) && (techSkillTags.length > 0 || softSkillTags.length > 0) && (
-                <div style={{ marginBottom: 24 }}>
-                  <label style={labelStyle}>{t.skillDescriptionPlaceholder}</label>
-                  {[...techSkillTags.map((s) => ({ s, set: setTechSkillDescriptions, val: techSkillDescriptions })), ...softSkillTags.map((s) => ({ s, set: setSoftSkillDescriptions, val: softSkillDescriptions }))].map(({ s, set: setDesc, val }, i) => (
-                    <div key={`${s}-${i}`} style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 700, color: THEME.secondary, marginBottom: 4 }}>{s}</div>
-                      <input
-                        value={val[s] || ""}
-                        onChange={(e) => setDesc((prev) => ({ ...prev, [s]: e.target.value }))}
-                        placeholder={t.skillDescriptionPlaceholder}
-                        style={inputStyle}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
 
               <label style={labelStyle}>{L.languagesLabel}</label>
               {languageEntries.map((l, i) => (

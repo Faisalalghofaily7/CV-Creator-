@@ -26,8 +26,16 @@ const PER_ATTEMPT_TIMEOUT_MS = 15_000;
 // is just a steadier stand-in. TUNE THIS NUMBER after checking real PDFs.
 const SUMMARY_MAX_WORDS = 75;
 
-function buildSystemPrompt(lang) {
+function buildSystemPrompt(lang, hasExperience) {
   const languageName = lang === "en" ? "English" : "Arabic";
+  // Overrides rule 8 below when true — there's no work-experience figure to
+  // state, and the model must never manufacture the impression that there
+  // is. Kept as a separate, unmissable block (rather than folded into the
+  // numbered list) specifically so it can't get lost among the other rules
+  // on a no-experience profile, where the honesty stakes are highest.
+  const noExperienceRule = hasExperience ? "" : `
+
+CRITICAL — THIS APPLICANT HAS NO WORK EXPERIENCE: the data below contains no work-experience entries. You MUST NOT claim, imply, or suggest they have any practical/work experience — no "has practical experience in...", "يتمتع بخبرة عملية في...", "worked as...", no years-of-experience figure, nothing of the sort. Instead, frame the entire summary honestly around their EDUCATION, SKILLS, and their READINESS/ASPIRATION to begin their career in the target role. For example: "[Field] graduate from [institution] with skills in X, seeking to begin a career in Y" / "خريج [التخصص] من [الجهة]، يمتلك مهارات في [كذا]، ويطمح لبدء مسيرته المهنية في [الوظيفة المستهدفة]." This overrides instruction 8 below — there is no experience figure to state for this applicant.`;
   return `You are a professional CV writer specialized in the Saudi job market. Write a professional summary for the applicant based on their data, in ${languageName}.
 
 Instructions:
@@ -44,6 +52,7 @@ Instructions:
 8. If "Years of experience" is provided in the data below, naturally state that figure somewhere in the summary (e.g. "...with 3 years of experience in..."), using the exact wording given — including any "about"/"تقريبًا" qualifier — rather than a different number or rounding of your own.
 9. Do NOT add a heading — return only the summary text.
 10. The final summary MUST be entirely in ${languageName}, regardless of what language the applicant's data below is written in. If the applicant wrote any of their data in Arabic while the target CV language is English (or vice versa), translate that content faithfully into ${languageName} — translate meaning, not word-for-word — while still following every rule above (never invent facts; only translate and phrase professionally).
+${noExperienceRule}
 
 Return ONLY the professional summary text, with no preamble or explanation.`;
 }
@@ -184,6 +193,10 @@ function buildApplicantData({ targetRoles, yearsOfExperience, experiences, educa
         .filter(Boolean)
         .forEach((b) => lines.push(`   - ${b}`));
     });
+  } else {
+    // Explicit, not just absent — makes the no-experience case impossible
+    // for the model to miss or accidentally infer experience for.
+    lines.push("", "Work experience: NONE — this applicant has no work experience.");
   }
 
   const realEducation = education.filter((x) => x && (x.degree || x.school));
@@ -221,6 +234,11 @@ export async function POST(request) {
 
     const client = getAnthropicClient();
 
+    // Drives the strict no-fabricated-experience rule in buildSystemPrompt
+    // — same "has any real experience content" check buildApplicantData
+    // uses for its own realExperiences filter above, kept consistent.
+    const hasExperience = experiences.some((x) => x && (x.title || x.employer || x.bullets));
+
     // Bounded, backed-off retry: any failure (thrown error — network,
     // timeout, any HTTP status, malformed response — OR an empty text
     // response) retries within the window; only an auth/bad-request error
@@ -240,7 +258,7 @@ export async function POST(request) {
             // draft off mid-word before enforceSummaryCap ever runs —
             // exactly the truncation this bug report described.
             max_tokens: 900,
-            system: buildSystemPrompt(lang),
+            system: buildSystemPrompt(lang, hasExperience),
             messages: [
               {
                 role: "user",

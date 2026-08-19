@@ -135,8 +135,8 @@ export async function POST(request) {
     // lib/cvQualityRules.js — the same module the client uses, so the two
     // can never drift). rawExperiences carries the raw date fields the
     // display-formatted `experiences` above doesn't (it's already reduced
-    // to a "period" string); skillDetails is only ever non-empty for a
-    // sparse CV (no experience), matching the client's own gating.
+    // to a "period" string). Technical skills always carry their
+    // description now (for every CV); soft skills never do.
     const qualityIssues = getCvQualityIssues({
       name: form?.name,
       experiences: rawExperiences || [],
@@ -144,12 +144,11 @@ export async function POST(request) {
       techSkillTags: (skillDetails?.tech || []).map((s) => s.name),
       softSkillTags: (skillDetails?.soft || []).map((s) => s.name),
       techSkillDescriptions: Object.fromEntries((skillDetails?.tech || []).map((s) => [s.name, s.description])),
-      softSkillDescriptions: Object.fromEntries((skillDetails?.soft || []).map((s) => [s.name, s.description])),
     });
     if (qualityIssues.includes("nameParts")) missingFields.push(lang === "en" ? "Full Name (exactly 3 parts)" : "الاسم الكامل (ثلاثة أجزاء بالضبط)");
     if (qualityIssues.includes("experienceIncomplete")) missingFields.push(lang === "en" ? "Experience entries (every field)" : "الخبرات العملية (جميع الحقول)");
     if (qualityIssues.includes("courseProvider")) missingFields.push(lang === "en" ? "Course issuing body" : "الجهة المانحة للدورة التدريبية");
-    if (qualityIssues.includes("sparseSkillsMinimum")) missingFields.push(lang === "en" ? "Skills (min. 5 technical + 5 professional, each described)" : "المهارات (5 تقنية و5 مهنية على الأقل، مع وصف لكل مهارة)");
+    if (qualityIssues.includes("sparseSkillsMinimum")) missingFields.push(lang === "en" ? "Skills (min. 5 technical, each described, + 5 professional)" : "المهارات (5 تقنية على الأقل مع وصف لكل مهارة، و5 مهنية على الأقل)");
 
     if (missingFields.length) {
       const message = lang === "en"
