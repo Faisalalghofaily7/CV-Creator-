@@ -66,6 +66,15 @@ async function requestEnhancement(client, lang, numbered, expectedCount) {
     },
     { maxRetries: 0, timeout: PER_ATTEMPT_TIMEOUT_MS }
   );
+  // A response cut off by the token budget ends wherever generation
+  // happened to be — including mid-character through the LAST line's LAST
+  // word. That doesn't change the LINE COUNT (every earlier line is still
+  // complete with its newline), so the expectedCount check below can't
+  // catch it — a bullet silently missing its final character or few
+  // characters would sail straight through as a "valid" result. Treating
+  // a truncated response as a failed attempt, exactly like generate-
+  // summary already does, is what actually catches this.
+  if (message.stop_reason === "max_tokens") throw new Error("Response truncated by max_tokens");
   const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
   const lines = raw
     .split("\n")

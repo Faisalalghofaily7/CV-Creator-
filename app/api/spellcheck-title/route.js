@@ -51,6 +51,11 @@ export async function POST(request) {
       messages: [{ role: "user", content: numbered }],
     });
 
+    // A response cut off by the token budget ends wherever generation
+    // happened to be — including mid-character through the LAST line's
+    // LAST word — without changing the line count, so the count check
+    // below alone can't catch a title silently missing its final letter.
+    if (message.stop_reason === "max_tokens") throw new Error("Response truncated by max_tokens");
     const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
     const lines = raw
       .split("\n")

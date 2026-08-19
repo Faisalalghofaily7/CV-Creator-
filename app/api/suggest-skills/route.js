@@ -65,6 +65,12 @@ export async function POST(request) {
           { maxRetries: 0, timeout: PER_ATTEMPT_TIMEOUT_MS }
         );
 
+        // A response cut off by the token budget can leave the LAST
+        // suggestion on the list missing its final character(s) without
+        // reducing how many lines came back — nothing else here would
+        // catch that, so treat it as a failed attempt like every other
+        // multi-line AI route in this codebase does.
+        if (message.stop_reason === "max_tokens") throw new Error("Response truncated by max_tokens");
         const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
         const suggestions = raw
           .split("\n")

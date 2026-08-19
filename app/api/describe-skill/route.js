@@ -117,6 +117,12 @@ export async function POST(request) {
           { maxRetries: 0, timeout: PER_ATTEMPT_TIMEOUT_MS }
         );
 
+        // A response cut off by the token budget ends wherever generation
+        // happened to be, mid-word — never on real punctuation. Treat it
+        // as a failed attempt (like every other multi-line AI route in
+        // this codebase already does) rather than accepting a description
+        // silently missing its final character(s).
+        if (message.stop_reason === "max_tokens") throw new Error("Response truncated by max_tokens");
         const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
         const description = raw.replace(/^["'“”]+|["'“”]+$/g, "").trim();
         if (!description) throw new Error("Empty response from Claude");
