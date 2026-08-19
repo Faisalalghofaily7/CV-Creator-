@@ -30,6 +30,19 @@ function clearProgress() {
   } catch {}
 }
 
+// Splits a full-name string into the three name boxes (first / father's /
+// family): first token → first name, last token → family name, everything
+// in between (including connector words like بن) → father's name. Used
+// only when mapping an UPLOADED CV's extracted name into the form — manual
+// entry types straight into the three boxes.
+function splitFullNameParts(name) {
+  const tokens = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return { nameFirst: "", nameFather: "", nameFamily: "" };
+  if (tokens.length === 1) return { nameFirst: tokens[0], nameFather: "", nameFamily: "" };
+  if (tokens.length === 2) return { nameFirst: tokens[0], nameFather: "", nameFamily: tokens[1] };
+  return { nameFirst: tokens[0], nameFather: tokens.slice(1, -1).join(" "), nameFamily: tokens[tokens.length - 1] };
+}
+
 // Matches Arabic script (incl. supplement/extended blocks and presentation
 // forms) — used to reject Arabic in the name field when the chosen CV
 // output language is English (see guardLangInput). Two variants: a
@@ -711,7 +724,8 @@ export default function AtsCvBuilder({ accessCode }) {
   // for what turns out to be non-empty data, so it leans inclusive.
   function hasEnteredData() {
     const hasPersonal = !!(
-      form.name?.trim() || form.phone?.trim() || form.email?.trim() ||
+      form.nameFirst?.trim() || form.nameFather?.trim() || form.nameFamily?.trim() ||
+      form.phone?.trim() || form.email?.trim() ||
       form.cityChoice || form.cityCustom?.trim() || form.linkedin?.trim() ||
       form.summary?.trim()
     );
@@ -763,7 +777,7 @@ export default function AtsCvBuilder({ accessCode }) {
   // ${languageName}", not hardcoded to English), so Arabic mode gets the
   // same AI safety net English mode always has.
   function isStrictLangFieldId(id) {
-    if (id === "name" || id === "city") return true;
+    if (id === "nameFirst" || id === "nameFather" || id === "nameFamily" || id === "city") return true;
     if (id.startsWith("customSectionTitle-")) return true;
     if (/^edu-\d+-(degree|specialization|school)$/.test(id)) return true;
     if (/^lang-\d+-name$/.test(id)) return true;
@@ -883,10 +897,13 @@ export default function AtsCvBuilder({ accessCode }) {
 
     setForm((f) => {
       const city = remapChoice(f.cityChoice, f.cityCustom, AR_CITIES, EN_CITIES, newCityOptions);
+      const clearWrongScript = (v) => (wrongScriptRe.test(v || "") ? "" : v);
       return {
         ...f,
         cityChoice: city.choice, cityCustom: city.custom,
-        name: wrongScriptRe.test(f.name || "") ? "" : f.name,
+        nameFirst: clearWrongScript(f.nameFirst),
+        nameFather: clearWrongScript(f.nameFather),
+        nameFamily: clearWrongScript(f.nameFamily),
       };
     });
 
@@ -1328,15 +1345,30 @@ export default function AtsCvBuilder({ accessCode }) {
     );
   }
 
-  const [form, setForm] = useState(saved?.form ?? {
-    name: "",
-    email: "",
-    phone: "",
-    cityChoice: "",
-    cityCustom: "",
-    linkedin: "",
-    displayPhone: "",
-    summary: "",
+  const [form, setForm] = useState(() => {
+    if (saved?.form) {
+      // Migrate an in-progress session saved before the name was split
+      // into three boxes — its single `name` string carries over so the
+      // applicant doesn't lose what they already typed.
+      const f = { nameFirst: "", nameFather: "", nameFamily: "", ...saved.form };
+      if (saved.form.name && !saved.form.nameFirst && !saved.form.nameFather && !saved.form.nameFamily) {
+        Object.assign(f, splitFullNameParts(saved.form.name));
+      }
+      delete f.name;
+      return f;
+    }
+    return {
+      nameFirst: "",
+      nameFather: "",
+      nameFamily: "",
+      email: "",
+      phone: "",
+      cityChoice: "",
+      cityCustom: "",
+      linkedin: "",
+      displayPhone: "",
+      summary: "",
+    };
   });
   // Whether a phone number different from the main contact number should
   // be shown on the CV — off by default, so there's only one visible phone
@@ -1468,7 +1500,7 @@ export default function AtsCvBuilder({ accessCode }) {
   };
 
   const canProceed = () => {
-    if (step === 0) return !!(form.name && form.phone && targetRoles.length > 0) && isValidNamePartCount(form.name);
+    if (step === 0) return !!(fullName && form.phone && targetRoles.length > 0) && isValidNamePartCount(fullName);
     if (step === 1) return !experiences.some(dateRangeInvalid) && experiences.every(isExperienceEntryComplete);
     if (step === 2) {
       return education.every((x) => x.schoolChoice !== OTHER || x.schoolCustom.trim())
@@ -1493,8 +1525,8 @@ export default function AtsCvBuilder({ accessCode }) {
   // regardless of navigation path.
   function findMissingRequiredFields() {
     const issues = [];
-    if (!form.name?.trim()) issues.push({ step: 0, message: L.nameLabel });
-    else if (!isValidNamePartCount(form.name)) issues.push({ step: 0, message: t.nameThreePartsError });
+    if (!fullName.trim()) issues.push({ step: 0, message: L.nameLabel });
+    else if (!isValidNamePartCount(fullName)) issues.push({ step: 0, message: t.nameThreePartsError });
     if (!form.phone?.trim()) issues.push({ step: 0, message: L.phoneLabel });
     if (!targetRoles.length) issues.push({ step: 0, message: L.targetRolesLabel });
     if (experiences.some(dateRangeInvalid)) issues.push({ step: 1, message: L.dateOrderError });
@@ -1552,7 +1584,7 @@ export default function AtsCvBuilder({ accessCode }) {
     const extractedName = String(extracted.name || "").trim();
     setForm((f) => ({
       ...f,
-      name: cvLang === "en" && ARABIC_RE.test(extractedName) ? "" : extractedName,
+      ...splitFullNameParts(cvLang === "en" && ARABIC_RE.test(extractedName) ? "" : extractedName),
       email: String(extracted.email || "").trim(),
       phone: normalizePhone(extracted.phone),
       cityChoice: cityMatch.choice,
@@ -1793,7 +1825,7 @@ export default function AtsCvBuilder({ accessCode }) {
 
     setForm((f) => ({
       ...f,
-      name: resolvedName,
+      ...splitFullNameParts(resolvedName),
       email: String(extracted.email || "").trim(),
       phone: normalizePhone(extracted.phone),
       cityChoice: cityMatch.choice,
@@ -2068,10 +2100,17 @@ export default function AtsCvBuilder({ accessCode }) {
     requiredFieldsClose: "حسنًا",
   };
 
+  // Full name is collected as 3 separate boxes (first/father's/family) —
+  // see the step-0 name fields below — and joined here into the single
+  // string every other part of the app (validation, preview, PDF/Word
+  // export payload, DB archival) already expects, so nothing downstream
+  // needs to know the name was ever split.
+  const fullName = [form.nameFirst, form.nameFather, form.nameFamily].map((s) => (s || "").trim()).filter(Boolean).join(" ");
+
   // ── Validation (gentle, non-blocking) ──
   const phoneValid = !form.phone || PHONE_RE.test(form.phone.replace(/[\s-]/g, ""));
   const emailValid = !form.email || EMAIL_RE.test(form.email.trim());
-  const nameValid = isValidNamePartCount(form.name);
+  const nameValid = isValidNamePartCount(fullName);
   const phoneError = !phoneValid && (cvLang === "en" ? "Enter a valid Saudi number (+9665XXXXXXXX or 05XXXXXXXX)." : "أدخل رقماً سعودياً صحيحاً (+9665XXXXXXXX أو 05XXXXXXXX).");
   const emailError = !emailValid && (cvLang === "en" ? "Enter a valid email address." : "الرجاء إدخال بريد إلكتروني صحيح.");
   const nameError = !nameValid && t.nameThreePartsError;
@@ -2291,7 +2330,7 @@ export default function AtsCvBuilder({ accessCode }) {
 
     const payload = {
       form: {
-        name: form.name,
+        name: fullName,
         email: form.email,
         phone: cvPhoneValue,
         city: cityValue,
@@ -2325,7 +2364,7 @@ export default function AtsCvBuilder({ accessCode }) {
       lang: cvLang,
       accessCode,
     };
-    const safeName = (form.name || "CV").replace(/\s+/g, "_");
+    const safeName = (fullName || "CV").replace(/\s+/g, "_");
 
     // iOS Safari doesn't support forced downloads (the `download` attribute
     // is ignored) and revoking a blob: URL right after triggering it — as a
@@ -3045,7 +3084,7 @@ export default function AtsCvBuilder({ accessCode }) {
           <div className="cv-page" style={cvPage}>
             {/* Header: name + professional headline (the most recent role's title) */}
             <div style={{ borderBottom: `2.5px solid ${C.ink}`, paddingBottom: 12, marginBottom: 16 }}>
-              <div style={{ fontSize: 26, fontWeight: 800, color: C.ink, letterSpacing: 0.3 }}>{form.name || t.fallbackName}</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: C.ink, letterSpacing: 0.3 }}>{fullName || t.fallbackName}</div>
               {cvHeadline && <div style={{ fontSize: 13.5, color: C.slate, marginTop: 3, fontWeight: 600 }}>{cvHeadline}</div>}
               {contactLineParts.length > 0 && (
                 <div style={{ fontSize: 12, color: C.slate, marginTop: 9 }}>{contactLineParts.join(" | ")}</div>
@@ -3304,8 +3343,15 @@ export default function AtsCvBuilder({ accessCode }) {
           {step === 0 && (
             <>
               <SectionTitle>البيانات الشخصية والهدف الوظيفي</SectionTitle>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                  {field("nameFirst", "الاسم الأول", form.nameFirst, set("nameFirst"), { req: true, ph: "عادل" })}
+                  {field("nameFather", "اسم الأب", form.nameFather, set("nameFather"), { req: true, ph: "علي" })}
+                  {field("nameFamily", "اسم العائلة", form.nameFamily, set("nameFamily"), { req: true, ph: "الأجاجي" })}
+                </div>
+                {nameError && <div style={warnStyle}>{nameError}</div>}
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                {field("name", "الاسم الكامل", form.name, set("name"), { req: true, ph: "عادل علي الأجاجي", error: nameError })}
                 {field("email", "البريد الإلكتروني", form.email, set("email"), { ph: "name@email.com", error: emailError })}
                 {field("phone", "رقم الجوال", form.phone, set("phone"), { req: true, ph: "+9665xxxxxxxx", error: phoneError })}
                 {selectWithOther(
@@ -3700,8 +3746,8 @@ export default function AtsCvBuilder({ accessCode }) {
             )}
           </div>
           {step === 0 && !canProceed() && (
-            <div style={{ marginTop: 12, fontSize: 12, color: form.name?.trim() && !nameValid ? "#b3261e" : THEME.text, textAlign: "center" }}>
-              {form.name?.trim() && !nameValid ? nameError : "* الاسم والجوال والوظيفة المستهدفة مطلوبة للمتابعة"}
+            <div style={{ marginTop: 12, fontSize: 12, color: fullName.trim() && !nameValid ? "#b3261e" : THEME.text, textAlign: "center" }}>
+              {fullName.trim() && !nameValid ? nameError : "* الاسم والجوال والوظيفة المستهدفة مطلوبة للمتابعة"}
             </div>
           )}
           {step === 1 && !canProceed() && (
