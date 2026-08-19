@@ -1408,6 +1408,25 @@ export default function AtsCvBuilder({ accessCode }) {
   // once per tag and never clobbers a description the user has edited.
   const [techDescGenerated, setTechDescGenerated] = useState(saved?.techDescGenerated ?? {});
   const [techDescLoading, setTechDescLoading] = useState({});
+  // Always-current mirror of techSkillDescriptions for describeTechSkill's
+  // "other descriptions on this CV" context (see below) — reading the
+  // state directly would close over whatever value was current when THAT
+  // particular describeTechSkill call was defined, which is stale the
+  // moment a second skill is queued before the first one's response has
+  // landed. Assigning during render (not inside an effect) is deliberate:
+  // the ref must already hold the latest value by the time the queued
+  // async call after it reads it, and an effect wouldn't run until after
+  // the very re-render that's queuing it.
+  const techSkillDescriptionsRef = useRef(techSkillDescriptions);
+  techSkillDescriptionsRef.current = techSkillDescriptions;
+  // Chains auto-generate calls one after another instead of firing them in
+  // parallel — network latency for one call reliably outlasts how fast a
+  // user can add several skill tags in a row, so parallel calls each saw
+  // an empty/incomplete "other descriptions on this CV" and the
+  // anti-repetition prompt had nothing to work with. Queuing through one
+  // ref-held promise guarantees skill N's request only fires after skill
+  // N-1's description has actually been recorded.
+  const techDescQueueRef = useRef(Promise.resolve());
   const [languageEntries, setLanguageEntries] = useState(saved?.languageEntries ?? [{ langChoice: "", langCustom: "", level: "" }]);
   const [tagDrafts, setTagDrafts] = useState({});
 
@@ -2256,15 +2275,30 @@ export default function AtsCvBuilder({ accessCode }) {
           // Already-generated descriptions for OTHER technical skills on
           // this same CV — lets the model avoid opening this one with the
           // same phrase/pattern, so a list of several skills doesn't read
-          // templated.
-          otherDescriptions: Object.values(techSkillDescriptions).filter((d) => d?.trim()),
+          // templated. Read from the ref (see its declaration above), not
+          // the state variable — this call may run after several more
+          // skills were queued, and the state closure from when
+          // describeTechSkill was defined would be stale by then.
+          otherDescriptions: Object.values(techSkillDescriptionsRef.current).filter((d) => d?.trim()),
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && typeof data.description === "string" && data.description.trim()) {
+        const trimmed = data.description.trim();
         // Never overwrite text the user may have already typed in while
         // this request was in flight.
-        setTechSkillDescriptions((prev) => (prev[skillName]?.trim() ? prev : { ...prev, [skillName]: data.description.trim() }));
+        if (!techSkillDescriptionsRef.current[skillName]?.trim()) {
+          // Patch the ref SYNCHRONOUSLY, right here — do not wait for the
+          // render-mirror line (near the ref's declaration) to catch up.
+          // The next queued skill's describeTechSkill call can start on
+          // the very next microtask once this one's promise resolves,
+          // which is not guaranteed to be later than React's next actual
+          // render; relying only on the render-synced mirror lost this
+          // description in that race, which is exactly why sibling calls
+          // kept seeing each other as having zero prior descriptions.
+          techSkillDescriptionsRef.current = { ...techSkillDescriptionsRef.current, [skillName]: trimmed };
+        }
+        setTechSkillDescriptions((prev) => (prev[skillName]?.trim() ? prev : { ...prev, [skillName]: trimmed }));
       }
     } catch {
       // Graceful no-op — the description field just stays blank/editable.
@@ -2280,6 +2314,11 @@ export default function AtsCvBuilder({ accessCode }) {
   // CV) with one mechanism. Runs at most once per tag: a tag already
   // carrying a (possibly reloaded/saved) description is marked generated
   // without re-calling the AI, so a user's own edits are never clobbered.
+  // Each new tag is QUEUED after the previous ones (see techDescQueueRef)
+  // rather than fired immediately/in parallel — a user adding several
+  // skills in a row reliably outpaces one round-trip, so parallel calls
+  // each missed every sibling still in flight and the anti-repetition
+  // prompt had nothing to compare against.
   useEffect(() => {
     techSkillTags.forEach((s) => {
       if (techDescGenerated[s] || techDescLoading[s]) return;
@@ -2287,7 +2326,11 @@ export default function AtsCvBuilder({ accessCode }) {
         setTechDescGenerated((prev) => ({ ...prev, [s]: true }));
         return;
       }
-      describeTechSkill(s);
+      // Marked loading synchronously (not inside describeTechSkill) so a
+      // second effect run before this one's turn comes up in the queue
+      // can't enqueue the same tag twice.
+      setTechDescLoading((prev) => ({ ...prev, [s]: true }));
+      techDescQueueRef.current = techDescQueueRef.current.then(() => describeTechSkill(s));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [techSkillTags]);
