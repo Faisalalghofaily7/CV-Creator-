@@ -2253,6 +2253,11 @@ export default function AtsCvBuilder({ accessCode }) {
           experienceSummary: skillSuggestExperienceSummary,
           educationSummary: skillSuggestEducationSummary,
           targetRoles: targetRoles.join(sep),
+          // Already-generated descriptions for OTHER technical skills on
+          // this same CV — lets the model avoid opening this one with the
+          // same phrase/pattern, so a list of several skills doesn't read
+          // templated.
+          otherDescriptions: Object.values(techSkillDescriptions).filter((d) => d?.trim()),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -3128,7 +3133,7 @@ export default function AtsCvBuilder({ accessCode }) {
                         {techSkillTags.map((s, i) => (
                           <li key={i} style={{ fontSize: 12.5, color: C.slate, marginBottom: 2 }}>
                             <strong style={{ color: C.ink }}>{s}</strong>
-                            {techSkillDescriptions[s]?.trim() ? ` — ${techSkillDescriptions[s].trim()}` : ""}
+                            {techSkillDescriptions[s]?.trim() ? `: ${techSkillDescriptions[s].trim()}` : ""}
                           </li>
                         ))}
                       </ul>
@@ -3139,8 +3144,18 @@ export default function AtsCvBuilder({ accessCode }) {
                 )}
                 {softSkillTags.length > 0 && (
                   <div>
-                    <span style={skillCat}>{t.softSkills} </span>
-                    <span style={{ fontSize: 12.5, color: C.slate }}>{softSkillTags.join(" | ")}</span>
+                    <span style={skillCat}>{t.softSkills}</span>
+                    {/* 2-column bulleted grid, mirroring the PDF/Word layout —
+                        columnCount naturally starts the first column on the
+                        side dir points to (right for RTL), filling
+                        top-to-bottom before moving to the next column. */}
+                    <ul style={{ margin: "4px 0 0", padding: 0, listStyle: "none", columnCount: 2, columnGap: 22, direction: cvDir }}>
+                      {softSkillTags.map((s, i) => (
+                        <li key={i} style={{ fontSize: 12.5, color: C.slate, breakInside: "avoid", marginBottom: 2, paddingInlineStart: 14, position: "relative" }}>
+                          <span style={{ position: "absolute", insetInlineStart: 0 }}>•</span>{s}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </Section>
