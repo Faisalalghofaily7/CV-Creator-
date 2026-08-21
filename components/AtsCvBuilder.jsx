@@ -167,9 +167,6 @@ const EN_UNIVERSITIES = ["King Saud University", "King Abdulaziz University", "K
 const AR_MAJORS = ["المحاسبة", "إدارة الأعمال", "التمويل", "الاقتصاد", "نظم المعلومات الإدارية", "علوم الحاسب", "هندسة البرمجيات", "الهندسة الصناعية", "الهندسة المدنية", "الهندسة الكهربائية", "الهندسة الميكانيكية", "علوم البيانات", "الأمن السيبراني", "القانون", "التسويق", "الموارد البشرية", "الطب", "التمريض", "الصيدلة", "العلوم", "الرياضيات", "اللغة الإنجليزية", "الإعلام", "العلاقات العامة", "التصميم الجرافيكي", "السياحة والفندقة", "التربية", "علم الاجتماع"];
 const EN_MAJORS = ["Accounting", "Business Administration", "Finance", "Economics", "Management Information Systems", "Computer Science", "Software Engineering", "Industrial Engineering", "Civil Engineering", "Electrical Engineering", "Mechanical Engineering", "Data Science", "Cybersecurity", "Law", "Marketing", "Human Resources", "Medicine", "Nursing", "Pharmacy", "Science", "Mathematics", "English Language", "Media", "Public Relations", "Graphic Design", "Tourism & Hospitality", "Education", "Sociology"];
 
-const AR_LEVELS = ["مبتدئ", "متوسط", "متقدم", "متمكّن", "لغة أم"];
-const EN_LEVELS = ["Beginner", "Intermediate", "Advanced", "Proficient", "Native"];
-
 const AR_LANGUAGE_OPTIONS = ["العربية", "الإنجليزية"];
 const EN_LANGUAGE_OPTIONS = ["Arabic", "English"];
 
@@ -440,18 +437,6 @@ function matchOption(value, arList, enList, activeList) {
   if (idx === -1) idx = enList.findIndex((o) => o.toLowerCase() === lower);
   if (idx !== -1 && activeList[idx]) return { choice: activeList[idx], custom: "" };
   return { choice: OTHER, custom: v };
-}
-
-// Same idea, but for plain (non-"other") dropdowns like language
-// proficiency level, which have no free-text fallback in the UI — an
-// unmatched value is simply left blank for the user to pick themselves.
-function matchExact(value, arList, enList, activeList) {
-  const v = String(value || "").trim();
-  if (!v) return "";
-  const lower = v.toLowerCase();
-  let idx = arList.findIndex((o) => o.toLowerCase() === lower);
-  if (idx === -1) idx = enList.findIndex((o) => o.toLowerCase() === lower);
-  return idx !== -1 && activeList[idx] ? activeList[idx] : "";
 }
 
 function normalizeMonth(v) {
@@ -864,7 +849,7 @@ export default function AtsCvBuilder({ accessCode }) {
 
   // Deterministic, no-AI remap of every dropdown-backed field's ALREADY-
   // STORED value to its exact equivalent in the new language's list —
-  // reuses the same matchOption/matchExact helpers the CV-upload
+  // reuses the same matchOption helper the CV-upload
   // extraction path already relies on (see applyExtractedData below), just
   // run here on a language switch instead of on freshly-extracted data.
   // Without this, a value picked from one language's list (e.g. "الرياض")
@@ -881,7 +866,6 @@ export default function AtsCvBuilder({ accessCode }) {
     const newMajorOptions = newLang === "en" ? EN_MAJORS : AR_MAJORS;
     const newUniversityOptions = newLang === "en" ? EN_UNIVERSITIES : AR_UNIVERSITIES;
     const newLanguageOptions = newLang === "en" ? EN_LANGUAGE_OPTIONS : AR_LANGUAGE_OPTIONS;
-    const newLevelOptions = newLang === "en" ? EN_LEVELS : AR_LEVELS;
 
     const remapChoice = (choice, custom, arList, enList, newOptions) => {
       if (choice === OTHER) return { choice, custom: wrongScriptRe.test(custom || "") ? "" : custom };
@@ -921,8 +905,7 @@ export default function AtsCvBuilder({ accessCode }) {
 
     setLanguageEntries((prev) => prev.map((l) => {
       const lang = remapChoice(l.langChoice, l.langCustom, AR_LANGUAGE_OPTIONS, EN_LANGUAGE_OPTIONS, newLanguageOptions);
-      const level = l.level ? (matchExact(l.level, AR_LEVELS, EN_LEVELS, newLevelOptions) || l.level) : l.level;
-      return { ...l, langChoice: lang.choice, langCustom: lang.custom, level };
+      return { ...l, langChoice: lang.choice, langCustom: lang.custom };
     }));
 
     // Job title / employer have no dropdown to remap through either — same
@@ -1427,7 +1410,7 @@ export default function AtsCvBuilder({ accessCode }) {
   // ref-held promise guarantees skill N's request only fires after skill
   // N-1's description has actually been recorded.
   const techDescQueueRef = useRef(Promise.resolve());
-  const [languageEntries, setLanguageEntries] = useState(saved?.languageEntries ?? [{ langChoice: "", langCustom: "", level: "" }]);
+  const [languageEntries, setLanguageEntries] = useState(saved?.languageEntries ?? [{ langChoice: "", langCustom: "" }]);
   const [tagDrafts, setTagDrafts] = useState({});
 
   // ── Optional sections — plain repeatable lists like Experience, empty
@@ -1510,7 +1493,7 @@ export default function AtsCvBuilder({ accessCode }) {
   };
 
   // ── Language helpers ──
-  const addLang = () => setLanguageEntries([...languageEntries, { langChoice: "", langCustom: "", level: "" }]);
+  const addLang = () => setLanguageEntries([...languageEntries, { langChoice: "", langCustom: "" }]);
   const rmLang = (i) => setLanguageEntries(languageEntries.filter((_, x) => x !== i));
   const setLang = (i, k) => (e) => {
     const copy = [...languageEntries];
@@ -1573,7 +1556,6 @@ export default function AtsCvBuilder({ accessCode }) {
   const universityOptions = cvLang === "en" ? EN_UNIVERSITIES : AR_UNIVERSITIES;
   const majorOptions = cvLang === "en" ? EN_MAJORS : AR_MAJORS;
   const languageOptions = cvLang === "en" ? EN_LANGUAGE_OPTIONS : AR_LANGUAGE_OPTIONS;
-  const levelOptions = cvLang === "en" ? EN_LEVELS : AR_LEVELS;
   const monthOptions = cvLang === "en" ? EN_MONTHS : AR_MONTHS;
   const gradYearOptions = yearRange(1970, CURRENT_YEAR + 6);
   const expYearOptions = yearRange(1970, CURRENT_YEAR);
@@ -1651,7 +1633,7 @@ export default function AtsCvBuilder({ accessCode }) {
     if (Array.isArray(extracted.languages) && extracted.languages.length) {
       setLanguageEntries(extracted.languages.map((x) => {
         const langMatch = matchOption(x.name, AR_LANGUAGE_OPTIONS, EN_LANGUAGE_OPTIONS, languageOptions);
-        return { langChoice: langMatch.choice, langCustom: langMatch.custom, level: matchExact(x.level, AR_LEVELS, EN_LEVELS, levelOptions) };
+        return { langChoice: langMatch.choice, langCustom: langMatch.custom };
       }));
     }
 
@@ -1690,7 +1672,7 @@ export default function AtsCvBuilder({ accessCode }) {
   // Used only when the uploaded CV's detected language differs from the
   // already-selected CV language (see the mismatch popup below). Reuses
   // the exact same bidirectional dropdown matching as applyExtractedData
-  // (matchOption/matchExact already handle either direction with no AI
+  // (matchOption already handles either direction with no AI
   // needed — untouched here), but additionally batch-translates the
   // fields that have no canonical list to fall back on: job title,
   // employer, unmatched "Other" custom text, unmatched skill tags, and
@@ -1740,7 +1722,6 @@ export default function AtsCvBuilder({ accessCode }) {
 
     const languageMatches = (Array.isArray(extracted.languages) ? extracted.languages : []).map((x) => ({
       langMatch: matchOption(x.name, AR_LANGUAGE_OPTIONS, EN_LANGUAGE_OPTIONS, languageOptions),
-      level: matchExact(x.level, AR_LEVELS, EN_LEVELS, levelOptions),
     }));
 
     const experiencesBase = (Array.isArray(extracted.experiences) ? extracted.experiences : []).map((x) => ({
@@ -1889,7 +1870,6 @@ export default function AtsCvBuilder({ accessCode }) {
       setLanguageEntries(languageMatches.map((l, i) => ({
         langChoice: l.langMatch.choice,
         langCustom: l.langMatch.choice === OTHER ? at(langSlots[i], l.langMatch.custom) : l.langMatch.custom,
-        level: l.level,
       })));
     }
 
@@ -2004,7 +1984,7 @@ export default function AtsCvBuilder({ accessCode }) {
     skillsHeading: "Skills & Languages", techSkillsLabel: "Technical Skills",
     techSkillsPh: "Search or type a skill and press Enter", techSkillsHint: "Pick from the list or type your own, then press Enter.",
     softSkillsLabel: "Professional Skills", languagesLabel: "Languages", langCard: "Language",
-    langName: "Language", proficiency: "Proficiency", addLang: "Add language",
+    langName: "Language", addLang: "Add language",
     extraHeading: "Additional Sections (Optional)",
     achievementsHeading: "Achievements", achievementsHint: "Optional — one entry per achievement.",
     achievementsPh: "e.g. Employee of the Year 2023", addAchievement: "Add achievement",
@@ -2071,7 +2051,7 @@ export default function AtsCvBuilder({ accessCode }) {
     skillsHeading: "المهارات واللغات", techSkillsLabel: "المهارات التقنية",
     techSkillsPh: "ابحث أو اكتب مهارة واضغط Enter", techSkillsHint: "اختر من القائمة أو اكتب مهارتك الخاصة ثم اضغط Enter.",
     softSkillsLabel: "المهارات المهنية", languagesLabel: "اللغات", langCard: "لغة",
-    langName: "اللغة", proficiency: "المستوى", addLang: "إضافة لغة",
+    langName: "اللغة", addLang: "إضافة لغة",
     extraHeading: "أقسام إضافية (اختيارية)",
     achievementsHeading: "الإنجازات", achievementsHint: "اختياري — كل إنجاز كسطر مستقل.",
     achievementsPh: "مثال: موظف العام 2023", addAchievement: "إضافة إنجاز",
@@ -2344,10 +2324,7 @@ export default function AtsCvBuilder({ accessCode }) {
     .join(sep);
   const languagesStr = languageEntries
     .filter((l) => (l.langChoice === OTHER ? l.langCustom.trim() : l.langChoice))
-    .map((l) => {
-      const name = l.langChoice === OTHER ? l.langCustom : l.langChoice;
-      return `${name}${l.level ? ` — ${l.level}` : ""}`;
-    })
+    .map((l) => (l.langChoice === OTHER ? l.langCustom : l.langChoice))
     .join(" | ");
 
   // Single confirm exports both files. The PDF is the critical/blocking
@@ -3644,14 +3621,13 @@ export default function AtsCvBuilder({ accessCode }) {
                       <button onClick={() => rmLang(i)} style={btnIcon}><Trash2 size={15} color="#b3261e" /></button>
                     )}
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
                     {selectWithOther(
                       `lang-${i}-name`, L.langName, l.langChoice, l.langCustom,
                       (v) => setLang(i, "langChoice")({ target: { value: v } }),
                       (v) => setLang(i, "langCustom")({ target: { value: v } }),
                       languageOptions
                     )}
-                    {selectField(`lang-${i}-level`, L.proficiency, l.level, setLang(i, "level"), levelOptions)}
                   </div>
                 </div>
               ))}
