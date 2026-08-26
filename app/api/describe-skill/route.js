@@ -60,6 +60,7 @@ Rules:
 - Tone: present the applicant at their strongest TRUTHFUL version — confident and capable, never fabricated and never weak/tentative.
 - Never fabricate specifics (employer names, years, project names, certifications) not present in the data below.
 - Each description must be short and grammatically standalone — a complete phrase on its own, not a fragment that only makes sense glued after the skill name.
+- The description MUST be entirely in ${languageName}, no matter what language the context below (job title, target role) happens to be written in — the applicant may freely type the target role in a different script. Read that context for MEANING only and write fresh in ${languageName}; never let a foreign-language word or phrase leak into the description.
 
 ANTI-REPETITION — this has failed before across multiple skills on the same CV, so follow it exactly, not just in spirit:
 - BANNED phrases/openers: ${bannedList}. Across the whole set of skill descriptions for one CV, each of these may appear AT MOST ONCE TOTAL, ideally never.${usedNote} For a no-experience applicant, achieve honesty through WHAT you describe (concrete knowledge or capability), never by repeating a disclaimer phrase like these.

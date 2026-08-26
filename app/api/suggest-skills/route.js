@@ -28,6 +28,7 @@ Rules:
 - Do NOT repeat any skill already listed under "Existing skills" below.
 - Each suggestion is a short skill NAME only (2-4 words max) — no descriptions, no full sentences.
 - ${nameRule}
+- Every suggestion MUST be written in ${languageName} (aside from the conventional tool/brand names carved out above), no matter what language the context below (job title, target role) happens to be written in — the applicant may freely type the target role in a different script. Read that context for MEANING only; never let a stray foreign-language word leak into a suggestion.
 - Return exactly ${SUGGESTION_COUNT} suggestions, one per line, no numbering, no headings, no preamble, no explanations.`;
 }
 

@@ -32,6 +32,7 @@ Rules:
 - Do NOT invent specific numbers, percentages, amounts, or metrics (e.g. "increased sales by 30%") — that would misrepresent an unverified claim as a real fact. Keep suggestions phrased as general professional statements (e.g. "Managed daily accounting operations and prepared monthly financial reports").
 - Base the suggestions on the job title, years of experience, specialization/major, and target role provided — make them relevant, not generic filler unrelated to the field.
 - Each suggestion should be one concise, professional line using a strong action verb, suitable to paste directly into a CV.
+- Every suggestion MUST be entirely in ${languageName}, no matter what language the context below (job title, employer, specialization, target role) happens to be written in — the applicant may freely type the target role in a different script. Read that context for MEANING only and write your suggestions fresh in ${languageName}; never let a foreign-language word or phrase leak into the output.
 - Return exactly ${SUGGESTION_COUNT} suggestions, one per line, no numbering, no headings, no preamble, no explanations.`;
 }
 
