@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { APIError } from "@anthropic-ai/sdk";
 import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
 import { retryWithBackoff } from "../../../lib/aiRetry";
+import { arabicWritingStandard } from "../../../lib/arabicWritingStandard";
 
 export const runtime = "nodejs";
 // Comfortably above the bounded retry window (see PER_ATTEMPT_TIMEOUT_MS
@@ -49,12 +50,12 @@ Instructions:
    - NEVER invent job titles, companies, or qualifications not mentioned.
    - Stick strictly to the given facts, phrased professionally.
 7. Write in professional third-person style (no "I"), like real professional CVs.
-8. If "Years of experience" is provided in the data below, naturally state that figure somewhere in the summary (e.g. "...with 3 years of experience in..."), using the exact wording given — including any "about"/"تقريبًا" qualifier — rather than a different number or rounding of your own.
+8. If "Years of experience" is provided in the data below, naturally state that figure somewhere in the summary (e.g. "...with 3 years of experience in..."), using the exact wording given — including any approximate qualifier (e.g. "about"/"تقارب") — rather than a different number or rounding of your own.
 9. Do NOT add a heading — return only the summary text.
 10. The final summary MUST be entirely in ${languageName}, regardless of what language the applicant's data below is written in. If the applicant wrote any of their data in Arabic while the target CV language is English (or vice versa), translate that content faithfully into ${languageName} — translate meaning, not word-for-word — while still following every rule above (never invent facts; only translate and phrase professionally).
 11. Write naturally and vary your phrasing/sentence opener — do not default to a fixed templated structure every time. Any example wording anywhere in these instructions illustrates TONE only, never required vocabulary to reuse verbatim.
 ${noExperienceRule}
-
+${lang === "ar" ? `\n${arabicWritingStandard()}\n` : ""}
 Return ONLY the professional summary text, with no preamble or explanation.`;
 }
 

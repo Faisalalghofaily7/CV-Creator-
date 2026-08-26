@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { APIError } from "@anthropic-ai/sdk";
 import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
 import { retryWithBackoff } from "../../../lib/aiRetry";
+import { arabicWritingStandard } from "../../../lib/arabicWritingStandard";
 
 export const runtime = "nodejs";
 // Chunks run concurrently (see CHUNK_SIZE below), so total wall time is
@@ -47,8 +48,10 @@ Rules:
 - Rephrase and elevate ONLY what is written. Do NOT invent numbers, metrics, tools, companies, or any facts not present.
 - Keep each to roughly one line, concise and professional.
 - Preserve the original meaning exactly.
+- Every line opens with a verb or, in Arabic, a verbal noun (مصدر) — never a bare noun with no action.
 - Every output line MUST be entirely in ${languageName}, even if the corresponding input entry was written in a different language (e.g. Arabic text submitted for an English CV, or vice versa) — translate it faithfully into ${languageName} before polishing it, never leave it in the original language.
-- Return the results in the same order, one per line, no numbering, no headings, no preamble.`;
+${lang === "ar" ? `\n${arabicWritingStandard()}\n` : ""}
+Return the results in the same order, one per line, no numbering, no headings, no preamble.`;
 }
 
 // One request to the model, one parse attempt, throwing on anything that

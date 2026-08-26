@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
 import { retryWithBackoff } from "../../../lib/aiRetry";
+import { arabicWritingStandard } from "../../../lib/arabicWritingStandard";
 
 export const runtime = "nodejs";
 // Same lighter treatment as suggest-skills/suggest-points — this fires
@@ -76,7 +77,7 @@ ANTI-REPETITION — this has failed before across multiple skills on the same CV
   4. (Rarely — at most once across the whole CV) the learning/education context.
 - Contrast example — BAD (repetitive, same template reused): "Excel — إجادة استخدامه ضمن الدبلوم." / "Word — تعلمته ضمن الدبلوم." / "الشبكات — درستها ضمن الدبلوم وأسعى لتطبيقها." GOOD (varied structure): "تنظيم البيانات وإنشاء الجداول والتقارير الأساسية." / "إعداد وتنسيق المستندات والتقارير الاحترافية." / "تهيئة الأجهزة وربطها ضمن الشبكة الداخلية." / "فهم آلية الاتصال بين الأجهزة واستكشاف أعطال الشبكة." These illustrate STRUCTURE and VARIETY only (and are shown with the skill name glued on, matching how they render on the CV) — write fresh wording for the actual skill below, in ${languageName}; never copy these verbatim, and never include the skill name itself in your answer (the skill name is added separately when rendering — you write only the description that follows it).
 - If "Other descriptions already on this CV" are listed below, this new one must use a different angle and a different opening word than every one of them.
-
+${lang === "ar" ? `\n${arabicWritingStandard()}\n` : ""}
 Return ONLY the description text — no quotes, no labels, no preamble, no explanation, no skill name.`;
 }
 

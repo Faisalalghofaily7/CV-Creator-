@@ -343,11 +343,13 @@ function arabicYearsWord(n) {
   return `${n} سنة`;
 }
 
-// The auto-calculated years-of-experience line shown in the header/contact
-// line: a whole number of years is stated directly; a partial year rounds
-// to the nearest whole year and is prefixed "about"/"تقريبًا" (a rounded
-// figure is inherently approximate). Rounds to 0 (and is omitted, same as
-// no experience at all) below 6 months.
+// Computed years-of-experience phrase, used as AI context (summary/
+// suggestion prompts) — a whole number of years is stated directly; a
+// partial year rounds to the nearest whole year and is marked approximate
+// (a rounded figure inherently is one). Rounds to 0 (and is omitted, same
+// as no experience at all) below 6 months. Arabic uses «تقارب» ("nears"),
+// never «تقريبًا» — see lib/arabicWritingStandard.js's hard ban on the
+// latter as a translated-sounding hedge.
 function formatYearsOfExperiencePhrase(totalMonths, lang) {
   if (!totalMonths || totalMonths < 6) return "";
   const wholeYears = Math.floor(totalMonths / 12);
@@ -360,7 +362,7 @@ function formatYearsOfExperiencePhrase(totalMonths, lang) {
     return isApprox ? `about ${years} ${unit} experience` : `${years} ${unit} experience`;
   }
   const word = arabicYearsWord(years);
-  return isApprox ? `تقريبًا ${word} خبرة` : `${word} خبرة`;
+  return isApprox ? `خبرة تقارب ${word}` : `${word} خبرة`;
 }
 
 // Keeps a GPA input to digits and at most one decimal point — no letters,
