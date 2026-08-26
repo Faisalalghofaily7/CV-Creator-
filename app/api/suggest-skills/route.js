@@ -6,9 +6,14 @@ export const runtime = "nodejs";
 // Comfortably above RETRY_WINDOW_MS plus headroom for an in-flight attempt
 // still running when the window closed. Same lighter treatment as
 // suggest-points — an optional, one-off "give me some ideas" click.
-export const maxDuration = 20;
+export const maxDuration = 40;
 
-const RETRY_WINDOW_MS = 12_000;
+// A single attempt can legitimately take close to PER_ATTEMPT_TIMEOUT_MS on
+// a longer/senior profile — with the old 12s window that left no real room
+// for a second try, so one slow-but-otherwise-fine attempt surfaced as a
+// hard failure ("couldn't generate, type manually") to the applicant.
+// Widened so a genuinely slow first attempt doesn't burn the whole budget.
+const RETRY_WINDOW_MS = 20_000;
 const PER_ATTEMPT_TIMEOUT_MS = 8_000;
 
 const SUGGESTION_COUNT = 8;

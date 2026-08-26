@@ -1304,10 +1304,10 @@ export default function AtsCvBuilder({ accessCode }) {
               {suggestions[id]?.loading ? <><Loader2 size={14} className="spin" /> {t.suggestLoading}</> : t.suggestForMe}
             </button>
             {!locked && suggestions[id]?.error && <div style={warnStyle}>{suggestions[id].error}</div>}
-            {!locked && !!suggestions[id]?.items?.length && (
+            {!locked && !!suggestions[id]?.items?.filter((s) => !items.includes(s)).length && (
               <div style={{ marginTop: 8, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: 12, background: THEME.soft }}>
                 <div style={{ ...hintStyle, marginTop: 0, marginBottom: 8 }}>{t.suggestGenericNote}</div>
-                {suggestions[id].items.map((s, i) => (
+                {suggestions[id].items.filter((s) => !items.includes(s)).map((s, i) => (
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: 6, padding: "8px 10px" }}>
                     <span style={{ flex: 1, fontSize: 12.5, color: THEME.text }}>{s}</span>
                     <button
@@ -2125,10 +2125,14 @@ export default function AtsCvBuilder({ accessCode }) {
   // always in sync with what's actually on the CV and can't drift into the
   // duplicated-label bug the old manual/extracted value was prone to.
   const computedYearsOfExperience = formatYearsOfExperiencePhrase(calculateTotalExperienceMonths(experiences), cvLang);
-  // Single clean "email | phone | city | LinkedIn | years experience" line —
-  // no dedicated headline field is collected, so the professional title
-  // under the name is simply the most recent role's job title, if any.
-  const contactLineParts = [form.email, cvPhoneValue, cityValue, form.linkedin, computedYearsOfExperience].filter(Boolean);
+  // Single clean "email | phone | city | LinkedIn" line — no dedicated
+  // headline field is collected, so the professional title under the name
+  // is simply the most recent role's job title, if any. Years of
+  // experience is deliberately NOT included here (per product decision) —
+  // computedYearsOfExperience is still computed above and used as AI
+  // context for the summary/suggestion prompts, just never shown to the
+  // reader on the CV itself.
+  const contactLineParts = [form.email, cvPhoneValue, cityValue, form.linkedin].filter(Boolean);
 
   // Resolves an AI-enhanceable item to whatever it should actually show/
   // export as right now: the AI version, a manual edit, or a reverted-to-
@@ -2366,7 +2370,6 @@ export default function AtsCvBuilder({ accessCode }) {
         // lib/cvHtmlTemplate.js / lib/cvDocxTemplate.js — none render these).
         targetCities: targetCitiesStr,
         internalNotes,
-        yearsOfExperience: computedYearsOfExperience,
         linkedin: form.linkedin,
         summary: form.summary,
         achievements: displayAchievementsStr,

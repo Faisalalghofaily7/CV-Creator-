@@ -5,9 +5,14 @@ import { retryWithBackoff } from "../../../lib/aiRetry";
 export const runtime = "nodejs";
 // Same lighter treatment as suggest-skills/suggest-points — this fires
 // automatically per added technical skill, not on a single blocking submit.
-export const maxDuration = 20;
+export const maxDuration = 40;
 
-const RETRY_WINDOW_MS = 12_000;
+// A single attempt can legitimately take close to PER_ATTEMPT_TIMEOUT_MS —
+// with too tight a window that leaves no real room for a second try, so
+// one slow-but-otherwise-fine attempt surfaces as a hard failure (an empty
+// description the applicant has to notice and fill in manually). Widened
+// so that doesn't happen — see the same fix on suggest-skills/suggest-points.
+const RETRY_WINDOW_MS = 20_000;
 const PER_ATTEMPT_TIMEOUT_MS = 8_000;
 
 // Concrete, named phrases that kept coming back verbatim across generated

@@ -5,15 +5,17 @@ import { retryWithBackoff } from "../../../lib/aiRetry";
 export const runtime = "nodejs";
 // Comfortably above RETRY_WINDOW_MS plus headroom for an in-flight attempt
 // still running when the window closed.
-export const maxDuration = 20;
+export const maxDuration = 40;
 
 // Lighter treatment than the main preview-generation routes: this is a
 // small, optional, one-off "give me some ideas" click, not something the
-// whole preview screen is waiting on — a shorter bounded window (a couple
-// of quick retries) is enough, and a failure just leaves the existing
+// whole preview screen is waiting on — a failure just leaves the existing
 // "اقترح لي" button clickable again rather than needing its own recovery
-// flow client-side.
-const RETRY_WINDOW_MS = 12_000;
+// flow client-side. Still, a single attempt can legitimately take close to
+// PER_ATTEMPT_TIMEOUT_MS — with too tight a window that leaves no real room
+// for a second try, so one slow-but-otherwise-fine attempt surfaces as a
+// hard failure to the applicant. Widened so that doesn't happen.
+const RETRY_WINDOW_MS = 20_000;
 const PER_ATTEMPT_TIMEOUT_MS = 8_000;
 
 const SUGGESTION_COUNT = 5;
