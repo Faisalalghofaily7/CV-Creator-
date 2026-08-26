@@ -42,50 +42,69 @@ function detectUsedPhrases(otherDescriptions, lang) {
   return [...used];
 }
 
-// hasExperience steers the entire prompt: an applicant with real work
-// history gets a description grounded in it, while a no-experience
-// applicant gets a description grounded only in education/target role —
-// the route must never let the model invent practical experience the
-// applicant doesn't have. Both cases must still read CONFIDENT, not
-// tentative — a no-experience applicant genuinely does know what they
-// studied, and should be described that way, just never as if they'd
-// already worked with it professionally.
-function buildSystemPrompt(lang, hasExperience, usedPhrases) {
+// NEW FEATURE — conditional skill descriptions. This route is only ever
+// called for a fresh graduate (isFreshGraduate computed client-side in
+// AtsCvBuilder.jsx from real experience dates — see lib/cvQualityRules.js's
+// isFreshGraduate/totalMonthsOfExperience — and never left for the model to
+// infer); an experienced candidate's technical skills render as bare
+// keywords and never reach this call at all (see the POST short-circuit
+// below, which stays as a deterministic backstop even if some future
+// caller invokes this route directly).
+//
+// For a fresh graduate, a description is still not automatic: it's earned
+// only when it states WHERE the skill was actually applied — a graduation
+// project, a co-op/training placement, a course, a volunteer role — never
+// a definition of what the skill/tool IS, since a definition says nothing
+// about THIS applicant (anyone who lists the same tool could write the
+// same sentence). If nothing in the applicant's data grounds a given
+// skill, the model must say so (respond exactly "NONE") rather than invent
+// a project or placement that was never mentioned — see the NONE handling
+// in POST below, which treats that as a valid result, not a failed one.
+function buildSystemPrompt(lang, usedPhrases) {
   const languageName = lang === "en" ? "English" : "Arabic";
-  const groundingRule = hasExperience
-    ? "Ground the description in the applicant's actual work experience below — briefly and confidently how they used or applied this skill on the job."
-    : 'The applicant has NO work experience yet. NEVER claim, imply, or fabricate any practical/work experience with this skill (no "used in my job", "applied at work", years of practice, specific employers, etc.). Instead, confidently state their real, education-grounded knowledge or capability with this skill.';
+  const bannedDefinitionExample = lang === "ar"
+    ? "SAP: استخدامه في تسجيل القيود ومراجعة الحسابات المالية بدقة"
+    : "SAP: a system used to record journal entries and review financial accounts";
+  const allowedGroundedExample = lang === "ar"
+    ? "SAP — تسجيل القيود ومطابقة الحسابات خلال تدريب تعاوني 6 أشهر"
+    : "SAP — recorded entries and reconciled accounts during a 6-month co-op placement";
   const bannedList = (BANNED_PHRASES[lang] || BANNED_PHRASES.ar).map((p) => `"${p}"`).join(", ");
   const usedNote = usedPhrases.length
     ? ` These have ALREADY been used in a description elsewhere on this CV — do not reuse them here in any form: ${usedPhrases.map((p) => `"${p}"`).join(", ")}.`
     : "";
-  return `You are a skilled, experienced professional CV writer for the Saudi job market. Write ONE short, natural-sounding description (max ~12 words) for a single technical skill on a CV, in ${languageName}.
+  return `You are a skilled, experienced professional CV writer for the Saudi job market. The applicant is a fresh graduate with no meaningful professional experience yet. Write ONE short, natural-sounding description (max ~12 words) for a single technical skill on a CV, in ${languageName} — or decide no honest description is possible (see below).
 
 Rules:
-- ${groundingRule}
-- Tone: present the applicant at their strongest TRUTHFUL version — confident and capable, never fabricated and never weak/tentative.
+- Ground the description ONLY in WHERE this specific skill was actually applied — a graduation project, a co-op/training placement, a course, or a volunteer role mentioned in the data below.
+- NEVER describe what the skill/tool/concept IS or does in general terms — that is a definition, not information about this applicant, and anyone who listed the same skill could write the same sentence.
+  BANNED (a definition, no matter how well-written): "${bannedDefinitionExample}"
+  ALLOWED (states where it was applied): "${allowedGroundedExample}"
+- If nothing in the data below ties THIS skill to a real project, placement, course, or activity, do not invent one — respond with exactly the single word NONE (nothing else — no punctuation, no quotes) instead of a description.
+- Tone when a description IS possible: present the applicant at their strongest TRUTHFUL version — confident and capable, never fabricated and never weak/tentative.
 - Never fabricate specifics (employer names, years, project names, certifications) not present in the data below.
 - Each description must be short and grammatically standalone — a complete phrase on its own, not a fragment that only makes sense glued after the skill name.
 - The description MUST be entirely in ${languageName}, no matter what language the context below (job title, target role) happens to be written in — the applicant may freely type the target role in a different script. Read that context for MEANING only and write fresh in ${languageName}; never let a foreign-language word or phrase leak into the description.
 
 ANTI-REPETITION — this has failed before across multiple skills on the same CV, so follow it exactly, not just in spirit:
-- BANNED phrases/openers: ${bannedList}. Across the whole set of skill descriptions for one CV, each of these may appear AT MOST ONCE TOTAL, ideally never.${usedNote} For a no-experience applicant, achieve honesty through WHAT you describe (concrete knowledge or capability), never by repeating a disclaimer phrase like these.
+- BANNED phrases/openers: ${bannedList}. Across the whole set of skill descriptions for one CV, each of these may appear AT MOST ONCE TOTAL, ideally never.${usedNote}
 - Build the description around ONE of these angles, rotating between them across a CV's skill list rather than reusing the same one every time:
-  1. What the skill IS / what it enables — e.g. "تنظيم البيانات وإنشاء الجداول والتقارير."
-  2. The capability/competence it gives — e.g. "القدرة على تهيئة الشبكات المحلية وربط الأجهزة."
-  3. The technical function/mechanism — e.g. "فهم بروتوكولات الاتصال واستكشاف أعطال الشبكة."
-  4. (Rarely — at most once across the whole CV) the learning/education context.
-- Contrast example — BAD (repetitive, same template reused): "Excel — إجادة استخدامه ضمن الدبلوم." / "Word — تعلمته ضمن الدبلوم." / "الشبكات — درستها ضمن الدبلوم وأسعى لتطبيقها." GOOD (varied structure): "تنظيم البيانات وإنشاء الجداول والتقارير الأساسية." / "إعداد وتنسيق المستندات والتقارير الاحترافية." / "تهيئة الأجهزة وربطها ضمن الشبكة الداخلية." / "فهم آلية الاتصال بين الأجهزة واستكشاف أعطال الشبكة." These illustrate STRUCTURE and VARIETY only (and are shown with the skill name glued on, matching how they render on the CV) — write fresh wording for the actual skill below, in ${languageName}; never copy these verbatim, and never include the skill name itself in your answer (the skill name is added separately when rendering — you write only the description that follows it).
+  1. The graduation project it was used in.
+  2. The co-op/training placement it was used in.
+  3. The course/training it was learned and applied in.
+  4. The volunteer role it was used in.
+- Contrast example — BAD (a definition, reused as a template): "Excel — برنامج جداول بيانات لتنظيم البيانات." / "Word — برنامج لتحرير المستندات." GOOD (varied, each grounded in a real activity): "Excel — تحليل بيانات المبيعات ضمن مشروع التخرج." / "Word — إعداد تقارير التدريب التعاوني الأسبوعية." These illustrate STRUCTURE and VARIETY only (and are shown with the skill name glued on, matching how they render on the CV) — write fresh wording for the actual skill below, in ${languageName}; never copy these verbatim, and never include the skill name itself in your answer (the skill name is added separately when rendering — you write only the description that follows it).
 - If "Other descriptions already on this CV" are listed below, this new one must use a different angle and a different opening word than every one of them.
 ${lang === "ar" ? `\n${arabicWritingStandard()}\n` : ""}
-Return ONLY the description text — no quotes, no labels, no preamble, no explanation, no skill name.`;
+Return ONLY the description text, or exactly NONE — no quotes, no labels, no preamble, no explanation, no skill name.`;
 }
 
-function buildContext({ skillName, jobTitle, experienceSummary, educationSummary, targetRoles, hasExperience, otherDescriptions }) {
+function buildContext({ skillName, jobTitle, experienceSummary, educationSummary, gradProjectSummary, coursesSummary, targetRoles, otherDescriptions }) {
   const lines = [`Skill: ${skillName}`];
   if (jobTitle) lines.push(`Target/current job title: ${jobTitle}`);
-  if (hasExperience && experienceSummary) lines.push(`Experience:\n${experienceSummary}`);
+  if (experienceSummary) lines.push(`Experience (co-op/training placements, if any):\n${experienceSummary}`);
   if (educationSummary) lines.push(`Education:\n${educationSummary}`);
+  if (gradProjectSummary) lines.push(`Graduation project(s):\n${gradProjectSummary}`);
+  if (coursesSummary) lines.push(`Courses/training completed:\n${coursesSummary}`);
   if (targetRoles) lines.push(`Target role(s): ${targetRoles}`);
   if (otherDescriptions?.length) lines.push(`Other descriptions already on this CV (use a different angle/opener from every one of these):\n${otherDescriptions.map((d) => `- ${d}`).join("\n")}`);
   return lines.join("\n");
@@ -99,14 +118,26 @@ export async function POST(request) {
     const jobTitle = typeof body.jobTitle === "string" ? body.jobTitle.trim() : "";
     const experienceSummary = typeof body.experienceSummary === "string" ? body.experienceSummary.trim() : "";
     const educationSummary = typeof body.educationSummary === "string" ? body.educationSummary.trim() : "";
+    const gradProjectSummary = typeof body.gradProjectSummary === "string" ? body.gradProjectSummary.trim() : "";
+    const coursesSummary = typeof body.coursesSummary === "string" ? body.coursesSummary.trim() : "";
     const targetRoles = typeof body.targetRoles === "string" ? body.targetRoles.trim() : "";
-    const hasExperience = !!body.hasExperience;
+    const isFreshGraduate = !!body.isFreshGraduate;
     const otherDescriptions = Array.isArray(body.otherDescriptions)
       ? body.otherDescriptions.filter((d) => typeof d === "string" && d.trim()).slice(0, 10)
       : [];
 
     if (!skillName) {
       return NextResponse.json({ error: "skillName is required" }, { status: 400 });
+    }
+
+    // NEW FEATURE — conditional skill descriptions: an experienced
+    // candidate (isFreshGraduate false) never gets a skill description.
+    // Decided here, in code, before any AI call is made — not left for the
+    // model to infer or enforce through the prompt (the caller already
+    // skips calling this route in that case; this is a deterministic
+    // backstop, not the primary mechanism).
+    if (!isFreshGraduate) {
+      return NextResponse.json({ description: "" });
     }
 
     const usedPhrases = detectUsedPhrases(otherDescriptions, lang);
@@ -118,8 +149,8 @@ export async function POST(request) {
           {
             model: CLAUDE_MODEL,
             max_tokens: 150,
-            system: buildSystemPrompt(lang, hasExperience, usedPhrases),
-            messages: [{ role: "user", content: buildContext({ skillName, jobTitle, experienceSummary, educationSummary, targetRoles, hasExperience, otherDescriptions }) }],
+            system: buildSystemPrompt(lang, usedPhrases),
+            messages: [{ role: "user", content: buildContext({ skillName, jobTitle, experienceSummary, educationSummary, gradProjectSummary, coursesSummary, targetRoles, otherDescriptions }) }],
           },
           { maxRetries: 0, timeout: PER_ATTEMPT_TIMEOUT_MS }
         );
@@ -131,6 +162,11 @@ export async function POST(request) {
         // silently missing its final character(s).
         if (message.stop_reason === "max_tokens") throw new Error("Response truncated by max_tokens");
         const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
+        // The model deciding it has no honest grounding for this skill
+        // (see the NEVER invent a project... rule above) is a valid,
+        // expected outcome, not a failed attempt — it must never hit the
+        // retry path or the generic "couldn't generate" error below.
+        if (/^none\.?$/i.test(raw)) return "";
         const description = raw.replace(/^["'“”]+|["'“”]+$/g, "").trim();
         if (!description) throw new Error("Empty response from Claude");
         return description;

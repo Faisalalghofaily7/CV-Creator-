@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Wrench, CheckCircle2, Languages as LanguagesIcon, Layers, Upload } from "lucide-react";
 import Spinner from "./Spinner";
 import { CV_LABELS } from "../lib/cvLabels";
-import { getCvQualityIssues, isValidNamePartCount, isExperienceEntryComplete, areExperienceCoreFieldsComplete, isCourseEntryComplete, isSparseCv, SPARSE_SKILLS_MINIMUM } from "../lib/cvQualityRules";
+import { getCvQualityIssues, isValidNamePartCount, isExperienceEntryComplete, areExperienceCoreFieldsComplete, isCourseEntryComplete, isSparseCv, isFreshGraduate, totalMonthsOfExperience, SPARSE_SKILLS_MINIMUM } from "../lib/cvQualityRules";
 
 // Persists in-progress form data across page refreshes. Keyed to the
 // access code so a *different* code (a new session) never inherits a
@@ -288,51 +288,6 @@ const THANK_YOU_MESSAGE_BILINGUAL = {
   ar: "شكرًا لاستخدامك خدمتنا. سنعمل الآن على إرسال سيرتك الذاتية إلى الشركات، وسنشاركك التقرير عبر واتساب خلال 72 ساعة. يعتمد عدد الشركات على المدن والوظائف المستهدفة التي حددتها.",
   en: "Thank you for using our service. We'll now work on sending your CV to companies, and we'll share the report with you via WhatsApp within 72 hours. The number of companies depends on the target cities and jobs you selected.",
 };
-
-// Total months of an experience entry's date range, or null if the entry
-// doesn't have enough to compute one (incomplete dates — by the time this
-// matters for export, findMissingRequiredFields has already required every
-// started entry to have full dates; this stays defensive for the live-
-// typing preview, where an in-progress entry is normal). "current" uses
-// today as the effective end date.
-function experienceMonthsRange(x) {
-  if (!x.fromYear || !x.fromMonth) return null;
-  const fromM = Number(x.fromYear) * 12 + Number(x.fromMonth);
-  let toM;
-  if (x.current) {
-    const now = new Date();
-    toM = now.getFullYear() * 12 + (now.getMonth() + 1);
-  } else {
-    if (!x.toYear || !x.toMonth) return null;
-    toM = Number(x.toYear) * 12 + Number(x.toMonth);
-  }
-  if (toM < fromM) return null; // invalid range — already flagged by dateRangeInvalid
-  return [fromM, toM];
-}
-
-// Total months of REAL experience across all entries, merging overlapping/
-// concurrent ranges (classic interval union) so two simultaneous jobs are
-// never double-counted, and gaps between jobs are never counted at all.
-function calculateTotalExperienceMonths(experiences) {
-  const ranges = experiences.map(experienceMonthsRange).filter(Boolean).sort((a, b) => a[0] - b[0]);
-  let total = 0;
-  let curStart = null;
-  let curEnd = null;
-  for (const [start, end] of ranges) {
-    if (curStart === null) {
-      curStart = start;
-      curEnd = end;
-    } else if (start <= curEnd) {
-      curEnd = Math.max(curEnd, end);
-    } else {
-      total += curEnd - curStart;
-      curStart = start;
-      curEnd = end;
-    }
-  }
-  if (curStart !== null) total += curEnd - curStart;
-  return total;
-}
 
 // Arabic cardinal-number/noun agreement for "years": 1 = "سنة", 2 =
 // "سنتان" (dual), 3-10 = "N سنوات" (plural), 11+ = "N سنة" (singular after
@@ -1512,7 +1467,7 @@ export default function AtsCvBuilder({ accessCode }) {
         && !education.some((x) => gpaExceedsScale(x.gpaValue, x.gpaScale));
     }
     if (step === 3 && isSparseCv(experiences)) {
-      const techOk = techSkillTags.length >= SPARSE_SKILLS_MINIMUM && techSkillTags.every((s) => techSkillDescriptions[s]?.trim());
+      const techOk = techSkillTags.length >= SPARSE_SKILLS_MINIMUM;
       const softOk = softSkillTags.length >= SPARSE_SKILLS_MINIMUM;
       return techOk && softOk;
     }
@@ -1544,7 +1499,7 @@ export default function AtsCvBuilder({ accessCode }) {
     }
     if (courses.some((c) => !isCourseEntryComplete(c))) issues.push({ step: 4, message: t.courseProviderRequiredError });
     if (isSparseCv(experiences)) {
-      const techOk = techSkillTags.length >= SPARSE_SKILLS_MINIMUM && techSkillTags.every((s) => techSkillDescriptions[s]?.trim());
+      const techOk = techSkillTags.length >= SPARSE_SKILLS_MINIMUM;
       const softOk = softSkillTags.length >= SPARSE_SKILLS_MINIMUM;
       if (!techOk || !softOk) issues.push({ step: 3, message: t.sparseSkillsMinimumError });
     }
@@ -2123,11 +2078,11 @@ export default function AtsCvBuilder({ accessCode }) {
   // explicitly opted into a separate CV-only number.
   const cvPhoneValue = useAltCvPhone && form.displayPhone ? form.displayPhone : form.phone;
   // Auto-calculated from the experience entries themselves (see
-  // calculateTotalExperienceMonths/formatYearsOfExperiencePhrase above) —
-  // there's no manual "years of experience" field anymore, so this is
-  // always in sync with what's actually on the CV and can't drift into the
-  // duplicated-label bug the old manual/extracted value was prone to.
-  const computedYearsOfExperience = formatYearsOfExperiencePhrase(calculateTotalExperienceMonths(experiences), cvLang);
+  // totalMonthsOfExperience in lib/cvQualityRules.js, formatYearsOfExperiencePhrase
+  // above) — there's no manual "years of experience" field anymore, so this
+  // is always in sync with what's actually on the CV and can't drift into
+  // the duplicated-label bug the old manual/extracted value was prone to.
+  const computedYearsOfExperience = formatYearsOfExperiencePhrase(totalMonthsOfExperience(experiences), cvLang);
   // Single clean "email | phone | city | LinkedIn" line — no dedicated
   // headline field is collected, so the professional title under the name
   // is simply the most recent role's job title, if any. Years of
@@ -2215,15 +2170,22 @@ export default function AtsCvBuilder({ accessCode }) {
 
   const techSkillsStr = techSkillTags.join(sep);
   const softSkillsStr = softSkillTags.join(sep);
-  // Technical skills always carry their (AI-generated, editable)
-  // description now — for every CV, not just a sparse one — so the server
-  // can validate (sparse minimum) and render description bullets
-  // unconditionally. Professional/soft skills never have descriptions, for
-  // anyone, so "soft" here only ever carries bare names.
+  // Technical skills only ever carry a description for a fresh graduate
+  // (see applicantIsFreshGraduate below) — an experienced candidate's
+  // technical skills always render as bare keywords, never diluted with
+  // page-filling sentences. Professional/soft skills never have
+  // descriptions, for anyone, so "soft" here only ever carries bare names.
   const skillDetails = {
     tech: techSkillTags.map((s) => ({ name: s, description: techSkillDescriptions[s] || "" })),
     soft: softSkillTags.map((s) => ({ name: s })),
   };
+
+  // NEW FEATURE — conditional skill descriptions: computed here, in code,
+  // never left for the model to infer (see app/api/describe-skill/route.js
+  // for the other half). Broader than isSparseCv (zero experience only) —
+  // a single few-month internship still isn't real professional experience
+  // for this purpose.
+  const applicantIsFreshGraduate = isFreshGraduate(experiences);
 
   // Context for the AI skill-suggestion buttons (rule #6) — job title +
   // experience + education + target role, matching what the route expects.
@@ -2239,12 +2201,27 @@ export default function AtsCvBuilder({ accessCode }) {
       x.schoolChoice === OTHER ? x.schoolCustom : x.schoolChoice,
     ].filter(Boolean).join(" — "))
     .join("\n");
+  // Extra grounding sources for a fresh graduate's skill descriptions (see
+  // describeTechSkill below) — a graduation project and completed
+  // courses/training are exactly the kind of concrete "where was this
+  // skill applied" context the new describe-skill prompt requires.
+  const skillGradProjectSummary = education
+    .map((x) => x.gradProject?.trim())
+    .filter(Boolean)
+    .join("\n");
+  const skillCoursesSummary = courses
+    .filter((c) => c.name?.trim())
+    .map((c) => [c.name, c.provider].filter(Boolean).join(" — "))
+    .join("\n");
 
-  // Fires an AI description for one technical skill — grounded in real
-  // experience when the applicant has any, otherwise honestly general
-  // (education + target role only, never fabricated work history). Purely
-  // additive/non-blocking: on failure the field is simply left blank and
-  // editable, exactly like a manually-typed description would be.
+  // Fires an AI description for one technical skill — ONLY ever called for
+  // a fresh graduate (see the auto-generate effect below), and even then
+  // grounded strictly in WHERE the applicant actually used it (graduation
+  // project, co-op placement, course, volunteer role) — never a definition
+  // of the skill itself. Purely additive/non-blocking: on failure, or when
+  // the model has no honest grounding to work with, the field is simply
+  // left blank/keyword-only, exactly like a manually-typed description
+  // would be.
   async function describeTechSkill(skillName) {
     setTechDescLoading((prev) => ({ ...prev, [skillName]: true }));
     try {
@@ -2255,9 +2232,11 @@ export default function AtsCvBuilder({ accessCode }) {
           lang: cvLang,
           skillName,
           jobTitle: cvHeadline || "",
-          hasExperience: !isSparseCv(experiences),
+          isFreshGraduate: applicantIsFreshGraduate,
           experienceSummary: skillSuggestExperienceSummary,
           educationSummary: skillSuggestEducationSummary,
+          gradProjectSummary: skillGradProjectSummary,
+          coursesSummary: skillCoursesSummary,
           targetRoles: targetRoles.join(sep),
           // Already-generated descriptions for OTHER technical skills on
           // this same CV — lets the model avoid opening this one with the
@@ -2313,6 +2292,14 @@ export default function AtsCvBuilder({ accessCode }) {
         setTechDescGenerated((prev) => ({ ...prev, [s]: true }));
         return;
       }
+      // An experienced candidate's technical skills are never described —
+      // decided here, in code, so an AI call is never even made for one
+      // (see applicantIsFreshGraduate above and the NEW FEATURE note on
+      // describeTechSkill).
+      if (!applicantIsFreshGraduate) {
+        setTechDescGenerated((prev) => ({ ...prev, [s]: true }));
+        return;
+      }
       // Marked loading synchronously (not inside describeTechSkill) so a
       // second effect run before this one's turn comes up in the queue
       // can't enqueue the same tag twice.
@@ -2320,7 +2307,7 @@ export default function AtsCvBuilder({ accessCode }) {
       techDescQueueRef.current = techDescQueueRef.current.then(() => describeTechSkill(s));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [techSkillTags]);
+  }, [techSkillTags, applicantIsFreshGraduate]);
 
   // "أخرى/Other" resolves to its typed-in custom text; never rendered into
   // the PDF (see form.targetCities below) — only shown in the admin/Staff1
