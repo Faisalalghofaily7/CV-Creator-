@@ -1,3 +1,5 @@
+import "./globals.css";
+
 export const metadata = {
   title: "منشئ السيرة الذاتية — ATS",
   description: "أنشئ سيرة ذاتية متوافقة مع أنظمة التوظيف (ATS) وحمّلها بصيغة PDF مباشرة من متصفحك.",

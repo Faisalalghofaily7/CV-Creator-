@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Copy, LogOut, Sparkles, Check, Loader2, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock, Upload, Tag, User, Users, UserPlus, Power, Trash2, Lock, AlertTriangle, Linkedin, AlertCircle } from "lucide-react";
+import { Copy, LogOut, Sparkles, Check, FileText, Archive, RefreshCw, ChevronDown, ChevronUp, Mail, Phone, MapPin, Target, Hash, KeyRound, Languages, Clock, Upload, Tag, User, Users, UserPlus, Power, Trash2, Lock, AlertTriangle, Linkedin, AlertCircle } from "lucide-react";
+import Spinner from "./Spinner";
 import { LIFECYCLE_STATUSES, MANUAL_LIFECYCLE_STATUSES, LIFECYCLE_STATUS_LABELS, LIFECYCLE_STATUS_COLORS } from "../lib/lifecycleStatus";
 import { GENERATION_SOURCE_LABELS, GENERATION_SOURCE_COLORS, creatorLabel } from "../lib/generationSource";
 import { STAFF_TYPES, STAFF_TYPE_LABELS, PACKAGE_OPTIONS, isValidStaffEmail } from "../lib/staffAccounts";
@@ -615,7 +616,7 @@ export default function AdminCodes({ role, staffType }) {
             </label>
           </div>
           <button onClick={handleGenerate} disabled={generating || !canGenerate} style={{ ...btnPrimary, opacity: generating || !canGenerate ? 0.7 : 1 }}>
-            {generating ? <><Loader2 size={16} className="spin-admin" /> جارٍ الإنشاء...</> : <><Sparkles size={16} /> توليد كود جديد</>}
+            {generating ? <><Spinner size={16} label="جارٍ الإنشاء..." /> جارٍ الإنشاء...</> : <><Sparkles size={16} /> توليد كود جديد</>}
           </button>
           {generateError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#b3261e" }}>{generateError}</div>}
 
@@ -797,7 +798,7 @@ export default function AdminCodes({ role, staffType }) {
               disabled={uploading || !uploadFile}
               style={{ ...btnPrimary, marginTop: 14, opacity: uploading || !uploadFile ? 0.7 : 1 }}
             >
-              {uploading ? <><Loader2 size={16} className="spin-admin" /> جارٍ المعالجة...</> : <><Upload size={16} /> رفع ومعالجة الملف</>}
+              {uploading ? <><Spinner size={16} label="جارٍ المعالجة..." /> جارٍ المعالجة...</> : <><Upload size={16} /> رفع ومعالجة الملف</>}
             </button>
             {uploadError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#b3261e" }}>{uploadError}</div>}
 
@@ -1149,7 +1150,7 @@ function StaffManagement({
           يُستخدم البريد الإلكتروني لإرسال إشعارات الطلبات الجديدة تلقائياً حسب نوع الموظف والخدمة المطلوبة — يمكن تركه فارغاً وتعبئته لاحقاً.
         </div>
         <button onClick={handleCreateStaff} disabled={creatingStaff || !canCreateStaff} style={{ ...btnPrimary, opacity: creatingStaff || !canCreateStaff ? 0.7 : 1 }}>
-          {creatingStaff ? <><Loader2 size={16} className="spin-admin" /> جارٍ الإنشاء...</> : <><UserPlus size={16} /> إنشاء حساب موظف</>}
+          {creatingStaff ? <><Spinner size={16} label="جارٍ الإنشاء..." /> جارٍ الإنشاء...</> : <><UserPlus size={16} /> إنشاء حساب موظف</>}
         </button>
         {createStaffError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#b3261e" }}>{createStaffError}</div>}
       </div>

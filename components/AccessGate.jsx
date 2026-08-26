@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { KeyRound, Loader2 } from "lucide-react";
+import { KeyRound } from "lucide-react";
+import Spinner from "./Spinner";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec" };
 
@@ -59,10 +60,9 @@ export default function AccessGate({ onContinue }) {
         {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#b3261e", fontWeight: 600 }}>{error}</div>}
 
         <button type="submit" disabled={submitting} style={{ ...btnPrimary, width: "100%", marginTop: 20, opacity: submitting ? 0.7 : 1 }}>
-          {submitting ? <><Loader2 size={16} className="spin-gate" /> جارٍ التحقق...</> : "متابعة"}
+          {submitting ? <><Spinner size={16} label="جارٍ التحقق..." /> جارٍ التحقق...</> : "متابعة"}
         </button>
       </form>
-      <style>{`.spin-gate { animation: spin-gate 1s linear infinite; } @keyframes spin-gate { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

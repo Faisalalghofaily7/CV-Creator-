@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Wrench, CheckCircle2, Loader2, Languages as LanguagesIcon, Layers, Upload } from "lucide-react";
+import { FileText, Download, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus, Trash2, User, Briefcase, GraduationCap, Wrench, CheckCircle2, Languages as LanguagesIcon, Layers, Upload } from "lucide-react";
+import Spinner from "./Spinner";
 import { CV_LABELS } from "../lib/cvLabels";
 import { getCvQualityIssues, isValidNamePartCount, isExperienceEntryComplete, areExperienceCoreFieldsComplete, isCourseEntryComplete, isSparseCv, SPARSE_SKILLS_MINIMUM } from "../lib/cvQualityRules";
 
@@ -1184,7 +1185,7 @@ export default function AtsCvBuilder({ accessCode }) {
               disabled={suggestions[id]?.loading}
               style={{ ...suggestBtnStyle, opacity: suggestions[id]?.loading ? 0.7 : 1 }}
             >
-              {suggestions[id]?.loading ? <><Loader2 size={14} className="spin" /> {t.suggestLoading}</> : t.suggestSkills}
+              {suggestions[id]?.loading ? <><Spinner size={14} label={t.suggestLoading} /> {t.suggestLoading}</> : t.suggestSkills}
             </button>
             {suggestions[id]?.error && <div style={warnStyle}>{suggestions[id].error}</div>}
             {!!suggestions[id]?.items?.length && (
@@ -1303,7 +1304,7 @@ export default function AtsCvBuilder({ accessCode }) {
               disabled={locked || suggestions[id]?.loading}
               style={{ ...suggestBtnStyle, opacity: locked || suggestions[id]?.loading ? 0.5 : 1, cursor: locked ? "not-allowed" : "pointer" }}
             >
-              {suggestions[id]?.loading ? <><Loader2 size={14} className="spin" /> {t.suggestLoading}</> : t.suggestForMe}
+              {suggestions[id]?.loading ? <><Spinner size={14} label={t.suggestLoading} /> {t.suggestLoading}</> : t.suggestForMe}
             </button>
             {!locked && suggestions[id]?.error && <div style={warnStyle}>{suggestions[id].error}</div>}
             {!locked && !!suggestions[id]?.items?.filter((s) => !items.includes(s)).length && (
@@ -2921,9 +2922,9 @@ export default function AtsCvBuilder({ accessCode }) {
                 style={{ ...btnPrimary, width: "100%", opacity: uploadingCv || translatingCv || !cvFile ? 0.7 : 1 }}
               >
                 {uploadingCv
-                  ? <><Loader2 size={16} className="spin" /> جارٍ استخراج البيانات...</>
+                  ? <><Spinner size={16} label="جارٍ استخراج البيانات..." /> جارٍ استخراج البيانات...</>
                   : translatingCv
-                  ? <><Loader2 size={16} className="spin" /> {L.translatingCv}</>
+                  ? <><Spinner size={16} label={L.translatingCv} /> {L.translatingCv}</>
                   : "رفع ومتابعة"}
               </button>
               {uploadCvError && (
@@ -2984,8 +2985,6 @@ export default function AtsCvBuilder({ accessCode }) {
             </div>
           </div>
         )}
-
-        <style>{`.spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -3042,7 +3041,7 @@ export default function AtsCvBuilder({ accessCode }) {
               dir={cvDir}
               style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, background: THEME.card, borderRadius: 14, padding: "28px 36px", boxShadow: "0 12px 40px rgba(18,41,63,.4)" }}
             >
-              <Loader2 size={28} className="spin" color={THEME.primary} />
+              <Spinner size={28} label={L.preparingCv} style={{ color: THEME.primary }} />
               <div style={{ fontSize: 14.5, fontWeight: 700, color: THEME.primary }}>{L.preparingCv}</div>
             </div>
           </div>
@@ -3060,7 +3059,7 @@ export default function AtsCvBuilder({ accessCode }) {
             disabled={downloading}
             style={{ ...btnBrass, opacity: downloading ? 0.7 : 1 }}
           >
-            {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التحميل...</> : <><Download size={16} /> تصدير PDF و Word</>}
+            {downloading ? <><Spinner size={16} label="جارٍ التحميل..." /> جارٍ التحميل...</> : <><Download size={16} /> تصدير PDF و Word</>}
           </button>
         </div>
 
@@ -3090,7 +3089,7 @@ export default function AtsCvBuilder({ accessCode }) {
               )}
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <button onClick={downloadCvFiles} disabled={downloading} style={{ ...btnPrimary, width: "100%", opacity: downloading ? 0.7 : 1, cursor: downloading ? "wait" : "pointer" }}>
-                  {downloading ? <><Loader2 size={16} className="spin" /> جارٍ التصدير...</> : "نعم، تصدير PDF و Word"}
+                  {downloading ? <><Spinner size={16} label="جارٍ التصدير..." /> جارٍ التصدير...</> : "نعم، تصدير PDF و Word"}
                 </button>
                 <button
                   onClick={() => { setShowExportModal(false); setExportError(""); }}
@@ -3125,7 +3124,7 @@ export default function AtsCvBuilder({ accessCode }) {
               <Section title={t.summary}>
                 {aiSummaryLoading ? (
                   <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: C.slate }}>
-                    <Loader2 size={14} className="spin" /> {t.summaryGenerating}
+                    <Spinner size={14} label={t.summaryGenerating} /> {t.summaryGenerating}
                   </div>
                 ) : (
                   <>
@@ -3957,8 +3956,6 @@ const btnIcon = { background: "transparent", border: "none", cursor: "pointer", 
 const navLinkBtnStyle = { background: "transparent", border: "none", color: "#2d5578", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", padding: "4px 8px", textDecoration: "underline", textUnderlineOffset: 3 };
 
 const printCSS = `
-  .spin { animation: spin 1s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
   li:before { content: "▪"; position: absolute; right: 0; color: #000000; font-size: 8pt; top: 2px; }
   [dir="ltr"] li:before { right: auto; left: 0; }
   input::placeholder, textarea::placeholder { color: #a8a294; }

@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { Lock, Loader2 } from "lucide-react";
+import { Lock } from "lucide-react";
+import Spinner from "./Spinner";
 
 const C = { ink: "#1a3a5c", paper: "#f5f7fa", paperCard: "#ffffff", slate: "#3a4a5a", line: "#dde4ec" };
 
@@ -55,10 +56,9 @@ export default function AdminLogin() {
         {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#b3261e" }}>{error}</div>}
 
         <button type="submit" disabled={submitting} style={{ ...btnPrimary, width: "100%", marginTop: 18, opacity: submitting ? 0.7 : 1 }}>
-          {submitting ? <><Loader2 size={16} className="spin-login" /> جارٍ الدخول...</> : "تسجيل الدخول"}
+          {submitting ? <><Spinner size={16} label="جارٍ الدخول..." /> جارٍ الدخول...</> : "تسجيل الدخول"}
         </button>
       </form>
-      <style>{`.spin-login { animation: spin-login 1s linear infinite; display: inline-block; } @keyframes spin-login { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
