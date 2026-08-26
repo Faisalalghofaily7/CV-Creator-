@@ -34,7 +34,8 @@ Rules:
 - Each suggestion is a short skill NAME only (2-4 words max) — no descriptions, no full sentences.
 - ${nameRule}
 - Every suggestion MUST be written in ${languageName} (aside from the conventional tool/brand names carved out above), no matter what language the context below (job title, target role) happens to be written in — the applicant may freely type the target role in a different script. Read that context for MEANING only; never let a stray foreign-language word leak into a suggestion.
-- Return exactly ${SUGGESTION_COUNT} suggestions, one per line, no numbering, no headings, no preamble, no explanations.`;
+- If the applicant's "Existing skills" already cover the most obvious/common skills for their field, do NOT run out of things to say: broaden to closely-related tools, adjacent methodologies, complementary certifications, or general professional competencies for the same field/role rather than stretching to force a narrow match. There is ALWAYS something reasonable left to suggest.
+- MANDATORY: respond with exactly ${SUGGESTION_COUNT} lines, one skill name each, no numbering, no headings, no preamble, no explanation, and NEVER a response that says there's nothing left to suggest — that is never an acceptable answer, always produce ${SUGGESTION_COUNT} real skill names using the broadening rule above if needed.`;
 }
 
 function buildContext({ jobTitle, experienceSummary, educationSummary, targetRoles, existingSkills }) {
