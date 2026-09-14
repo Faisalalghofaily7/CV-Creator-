@@ -9,9 +9,8 @@ import { getAnthropicClient, CLAUDE_MODEL } from "../../../lib/anthropic";
 import { retryWithBackoff } from "../../../lib/aiRetry";
 
 export const runtime = "nodejs";
-// Comfortably above two full per-attempt timeouts back-to-back (worst case
-// PER_ATTEMPT_TIMEOUT_MS twice, plus a short backoff between them) plus
-// headroom for document reading/parsing and response overhead.
+// Comfortably above one full 90-second extraction attempt plus headroom for
+// document reading/parsing, retry bookkeeping, and response overhead.
 export const maxDuration = 120;
 
 // Per-attempt timeout, not the total retry budget — the SDK's own default
@@ -20,22 +19,19 @@ export const maxDuration = 120;
 // so retryWithBackoff has exclusive, observable control over every retry
 // (one call to .create() below is exactly one logged attempt). Longer than
 // the other AI routes' per-attempt budget — a full CV extraction reads a
-// whole document (potentially multi-page, image-heavy PDF) AND generates
-// up to 16000 output tokens, which genuinely takes longer than a short
-// summary or a handful of polished lines. 25s was proving too tight in
+// whole document (potentially multi-page, image-heavy PDF) AND can generate
+// up to 8000 output tokens, which genuinely takes longer than a short
+// summary or a handful of polished lines. 45s was proving too tight in
 // production — real CVs were consistently hitting this ceiling on every
 // attempt (a client-side timeout, not a real API error), so this is raised
 // with real headroom instead of just enough for the fastest case.
-const PER_ATTEMPT_TIMEOUT_MS = 45_000;
+const PER_ATTEMPT_TIMEOUT_MS = 90_000;
 
-// Wider than the default 40s window (see retryWithBackoff) so a second
-// attempt isn't cut off before it even gets to run its own full timeout —
-// with a 45s per-attempt budget, a default 40s window would let the first
-// slow-but-not-hung attempt exhaust the window on its own and skip the
-// retry entirely. Sized to allow exactly two full-length attempts
-// (45s + ~1s backoff + 45s ≈ 91s) and then stop — not a third, which
-// wouldn't have room to finish inside maxDuration (120s) anyway.
-const RETRY_WINDOW_MS = 90_000;
+// Wider than the per-attempt timeout so retryWithBackoff can finish one full
+// 90-second attempt and then decide whether enough of the bounded window is
+// left to start another attempt. The retry window controls whether another
+// attempt may start; it does not shorten an attempt that is already active.
+const RETRY_WINDOW_MS = 95_000;
 
 // Conservative cap — comfortably covers a real multi-page CV while staying
 // well under Vercel's inbound request-body limit (~4.5MB on Hobby) and
@@ -133,6 +129,13 @@ export async function POST(request) {
         console.warn("[EXTRACT-CV] Local PDF text extraction failed, falling back to document vision:", err?.message);
       }
 
+      console.log("[EXTRACT-CV] PDF processing", {
+        fileName: file.name,
+        fileSize: file.size,
+        pdfTextChars: pdfText.length,
+        mode: pdfText.length >= MIN_PDF_TEXT_CHARS ? "text" : "vision",
+      });
+
       if (pdfText.length >= MIN_PDF_TEXT_CHARS) {
         messageContent = [{ type: "text", text: `Extract this CV's data as instructed in the system prompt.\n\n---\n${pdfText}` }];
       } else {
@@ -166,15 +169,15 @@ export async function POST(request) {
     // final failure log below still has that diagnostic detail.
     const extractResult = await retryWithBackoff(
       async () => {
+        console.log("[EXTRACT-CV] Claude extraction request starting");
         const message = await client.messages.create(
           {
             model: CLAUDE_MODEL,
             // A detailed, multi-role real-world CV can easily need several
             // thousand output tokens for its JSON — 4096 was cutting genuine
-            // CVs off mid-string (truncated/invalid JSON). This is
-            // comfortably above what even a long, senior-level CV should
-            // require.
-            max_tokens: 16000,
+            // CVs off mid-string (truncated/invalid JSON). 8000 leaves
+            // comfortable headroom for long CVs without over-allocating.
+            max_tokens: 8000,
             system: SYSTEM_PROMPT,
             messages: [{ role: "user", content: messageContent }],
           },
@@ -182,6 +185,10 @@ export async function POST(request) {
         );
 
         const raw = message.content?.find((block) => block.type === "text")?.text?.trim() || "";
+        console.log("[EXTRACT-CV] Claude extraction response", {
+          stopReason: message.stop_reason,
+          outputTextChars: raw.length,
+        });
         if (!raw) throw new Error("Empty response from Claude");
 
         const jsonText = stripJsonFences(raw);
