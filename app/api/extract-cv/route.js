@@ -44,6 +44,57 @@ const MAX_FILE_BYTES = 4 * 1024 * 1024;
 // scanned-PDF case, not a short-but-real CV.
 const MIN_PDF_TEXT_CHARS = 200;
 
+// Some Arabic PDFs technically expose a text layer but map the embedded font
+// glyphs to the wrong Unicode code points. pdf-parse then returns thousands
+// of characters that look superficially Arabic but are unusable (for example
+// unnaturally dense tanween/harakat throughout ordinary CV prose). In that
+// case, sending the corrupt text to Claude is worse than sending the PDF
+// itself, so detect that pattern and fall back to document vision.
+const MAX_ARABIC_DIACRITIC_RATIO = 0.08;
+const MIN_ARABIC_CHARS_FOR_QUALITY_CHECK = 100;
+
+function assessPdfTextQuality(text) {
+  const arabicChars = text.match(/[\u0600-\u06FF]/g) || [];
+  const arabicDiacritics = text.match(/[\u064B-\u065F\u0670]/g) || [];
+  const replacementChars = (text.match(/\uFFFD/g) || []).length;
+  const arabicDiacriticRatio = arabicChars.length ? arabicDiacritics.length / arabicChars.length : 0;
+
+  if (text.length < MIN_PDF_TEXT_CHARS) {
+    return {
+      usable: false,
+      textQuality: "insufficient",
+      reason: "too-little-text",
+      arabicChars: arabicChars.length,
+      arabicDiacriticRatio,
+      replacementChars,
+    };
+  }
+
+  const likelyGarbledArabic =
+    arabicChars.length >= MIN_ARABIC_CHARS_FOR_QUALITY_CHECK &&
+    arabicDiacriticRatio >= MAX_ARABIC_DIACRITIC_RATIO;
+
+  if (replacementChars > 0 || likelyGarbledArabic) {
+    return {
+      usable: false,
+      textQuality: "poor",
+      reason: replacementChars > 0 ? "replacement-characters" : "garbled-arabic-text-layer",
+      arabicChars: arabicChars.length,
+      arabicDiacriticRatio,
+      replacementChars,
+    };
+  }
+
+  return {
+    usable: true,
+    textQuality: "good",
+    reason: "usable-text-layer",
+    arabicChars: arabicChars.length,
+    arabicDiacriticRatio,
+    replacementChars,
+  };
+}
+
 // Extraction only — never translates or rephrases (that happens later, at
 // preview time, through the same AI-enhancement pipeline every other CV
 // field already goes through). Field names match the shape the client
@@ -113,14 +164,10 @@ export async function POST(request) {
     let messageContent;
     if (isPdf) {
       // Most CVs are text-layer PDFs (exported from Word, Canva, etc.), not
-      // scans — extracting that text locally and sending it as plain text
-      // (same as the .docx path below) is both far faster and more reliable
-      // than making Claude run its own page-image vision pipeline on every
-      // upload, which was the actual cause of production timeouts: a request
-      // routed through vision processing is much slower and more variable in
-      // latency than a plain-text request, even for a small file. Vision is
-      // kept as a fallback for the genuine minority case — a scanned/
-      // image-only PDF with no extractable text layer.
+      // scans — extracting that text locally and sending it as plain text is
+      // faster and cheaper. A PDF with too little text OR a corrupt Arabic
+      // glyph mapping falls back to document vision so Claude reads the
+      // rendered document rather than unusable extracted characters.
       let pdfText = "";
       try {
         const parsed = await pdfParse(buffer);
@@ -129,14 +176,22 @@ export async function POST(request) {
         console.warn("[EXTRACT-CV] Local PDF text extraction failed, falling back to document vision:", err?.message);
       }
 
+      const quality = assessPdfTextQuality(pdfText);
+      const mode = quality.usable ? "text" : "vision";
+
       console.log("[EXTRACT-CV] PDF processing", {
         fileName: file.name,
         fileSize: file.size,
         pdfTextChars: pdfText.length,
-        mode: pdfText.length >= MIN_PDF_TEXT_CHARS ? "text" : "vision",
+        textQuality: quality.textQuality,
+        reason: quality.reason,
+        arabicChars: quality.arabicChars,
+        arabicDiacriticRatio: Number(quality.arabicDiacriticRatio.toFixed(4)),
+        replacementChars: quality.replacementChars,
+        mode,
       });
 
-      if (pdfText.length >= MIN_PDF_TEXT_CHARS) {
+      if (quality.usable) {
         messageContent = [{ type: "text", text: `Extract this CV's data as instructed in the system prompt.\n\n---\n${pdfText}` }];
       } else {
         messageContent = [
